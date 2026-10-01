@@ -1,13 +1,25 @@
 from urllib.parse import urlsplit
 
 
-def normalize_adobe_url(raw_url: str) -> str:
-    """Apply the fixed Adobe Analytics URL pattern used by this report."""
+def normalize_adobe_url_prefix(raw_url: str) -> str:
+    """Normalize an Adobe URL without inventing a trailing slash.
+
+    Adobe Analytics can truncate long URLs mid-slug. Keeping the raw prefix
+    intact lets GSC be used to recover the full canonical page URL.
+    """
     url = (raw_url or "").strip()
     if not url:
         return ""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+    return url
+
+
+def normalize_adobe_url(raw_url: str) -> str:
+    """Apply the fixed Adobe Analytics URL pattern used by this report."""
+    url = normalize_adobe_url_prefix(raw_url)
+    if not url:
+        return ""
     if not url.endswith("/"):
         url += "/"
     return url
