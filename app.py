@@ -9,7 +9,14 @@ import streamlit as st
 
 from adobe_parser import parse_adobe_csv
 from gemini_analyzer import DEFAULT_MODEL, generate_traffic_insight
-from gsc_client import build_gsc_service, fetch_top_queries, gsc_reporting_period, load_service_account_info, resolve_site_url
+from gsc_client import (
+    build_gsc_service,
+    fetch_top_queries,
+    gsc_reporting_period,
+    load_authorized_user_info,
+    load_service_account_info,
+    resolve_site_url,
+)
 from page_fetcher import fetch_meta_title
 from ppt_report import build_ppt_report
 from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_screenshot
@@ -46,19 +53,32 @@ def get_secret(name: str, default=None):
 
 
 def get_gsc_service():
-    json_text = get_secret("GSC_SERVICE_ACCOUNT_JSON")
-    mapping = None
+    # Preferred: OAuth credentials for an existing GSC user account.
+    # This works even when the user cannot add a Service Account to the property.
+    user_json = get_secret("GSC_AUTHORIZED_USER_JSON")
+    user_mapping = None
     try:
-        mapping = st.secrets.get("gsc_service_account")
+        user_mapping = st.secrets.get("gsc_authorized_user")
     except Exception:
         pass
 
-    # Prefer explicit Service Account JSON when configured.
-    # Otherwise use Application Default Credentials (recommended on Cloud Run).
-    if json_text or mapping:
-        info = load_service_account_info(json_text=json_text, mapping=mapping)
-        return build_gsc_service(info)
+    if user_json or user_mapping:
+        info = load_authorized_user_info(json_text=user_json, mapping=user_mapping)
+        return build_gsc_service(authorized_user_info=info)
 
+    # Backward-compatible Service Account option.
+    sa_json = get_secret("GSC_SERVICE_ACCOUNT_JSON")
+    sa_mapping = None
+    try:
+        sa_mapping = st.secrets.get("gsc_service_account")
+    except Exception:
+        pass
+
+    if sa_json or sa_mapping:
+        info = load_service_account_info(json_text=sa_json, mapping=sa_mapping)
+        return build_gsc_service(service_account_info=info)
+
+    # Final fallback: Cloud Run / local ADC.
     return build_gsc_service()
 
 
