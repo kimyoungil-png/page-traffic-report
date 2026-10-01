@@ -1,6 +1,30 @@
 from urllib.parse import urlsplit
 
 
+def is_probable_page_url(raw_url: str) -> bool:
+    """Return True only for strings that look like real web page URLs.
+
+    Adobe exports can contain matrix labels such as "Entry Pages" in the same
+    column as URL rows. Those must never be treated as page URLs.
+    """
+    value = (raw_url or "").strip()
+    if not value:
+        return False
+
+    candidate = value if value.startswith(("http://", "https://")) else "https://" + value
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return False
+
+    host = parsed.hostname or ""
+    if not host or "." not in host:
+        return False
+    if any(ch.isspace() for ch in host):
+        return False
+    return parsed.scheme in {"http", "https"}
+
+
 def normalize_adobe_url_prefix(raw_url: str) -> str:
     """Normalize an Adobe URL without inventing a trailing slash.
 
