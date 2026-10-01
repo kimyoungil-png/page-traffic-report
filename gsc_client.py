@@ -7,14 +7,28 @@ from urllib.parse import urlparse
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 
-def build_gsc_service(service_account_info: dict[str, Any]):
-    from google.oauth2 import service_account
+def build_gsc_service(service_account_info: dict[str, Any] | None = None):
+    """Build Search Console API service.
+
+    If explicit Service Account JSON is supplied, use it.
+    Otherwise use Application Default Credentials (ADC). On Cloud Run this
+    means the runtime service account can be granted Search Console access
+    directly, avoiding a downloadable private-key JSON file.
+    """
     from googleapiclient.discovery import build
 
-    credentials = service_account.Credentials.from_service_account_info(
-        service_account_info,
-        scopes=SCOPES,
-    )
+    if service_account_info:
+        from google.oauth2 import service_account
+
+        credentials = service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes=SCOPES,
+        )
+    else:
+        import google.auth
+
+        credentials, _ = google.auth.default(scopes=SCOPES)
+
     return build("searchconsole", "v1", credentials=credentials, cache_discovery=False)
 
 
