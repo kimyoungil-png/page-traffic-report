@@ -9,6 +9,7 @@ SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-page-traffic-report}"
 GEMINI_SECRET_NAME="${GEMINI_SECRET_NAME:-page-traffic-report-gemini-api-key}"
 GSC_USER_SECRET_NAME="${GSC_USER_SECRET_NAME:-page-traffic-report-gsc-user-oauth}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
+ACCESS_MODE="${ACCESS_MODE:-public}"
 
 if ! command -v gcloud >/dev/null 2>&1; then
   echo "gcloud CLI is required" >&2
@@ -51,7 +52,13 @@ else
   fi
 fi
 
-set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --allow-unauthenticated   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/"
+set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/"
+
+if [ "$ACCESS_MODE" = "iap" ]; then
+  set -- "$@" --no-allow-unauthenticated --iap
+else
+  set -- "$@" --allow-unauthenticated
+fi
 
 if [ "$USE_DEDICATED_SA" -eq 1 ]; then
   set -- "$@" --service-account "$SERVICE_ACCOUNT_EMAIL"
