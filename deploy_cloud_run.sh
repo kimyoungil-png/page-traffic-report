@@ -8,6 +8,7 @@ MEMORY="${MEMORY:-1Gi}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-page-traffic-report}"
 GEMINI_SECRET_NAME="${GEMINI_SECRET_NAME:-page-traffic-report-gemini-api-key}"
 GSC_USER_SECRET_NAME="${GSC_USER_SECRET_NAME:-page-traffic-report-gsc-user-oauth}"
+APP_PASSWORD_SECRET_NAME="${APP_PASSWORD_SECRET_NAME:-page-traffic-report-app-password}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
 ACCESS_MODE="${ACCESS_MODE:-public}"
 
@@ -74,6 +75,13 @@ if gcloud secrets describe "$GSC_USER_SECRET_NAME" --project "$PROJECT_ID" >/dev
       --role "roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
   fi
   set -- "$@" --set-secrets "GSC_AUTHORIZED_USER_JSON=$GSC_USER_SECRET_NAME:latest"
+fi
+
+if gcloud secrets describe "$APP_PASSWORD_SECRET_NAME" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  if [ "$USE_DEDICATED_SA" -eq 1 ]; then
+    gcloud secrets add-iam-policy-binding "$APP_PASSWORD_SECRET_NAME"       --project "$PROJECT_ID"       --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL"       --role "roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
+  fi
+  set -- "$@" --set-secrets "APP_PASSWORD=$APP_PASSWORD_SECRET_NAME:latest"
 fi
 
 if gcloud secrets describe "$GEMINI_SECRET_NAME" --project "$PROJECT_ID" >/dev/null 2>&1; then
