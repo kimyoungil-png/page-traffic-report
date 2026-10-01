@@ -12,7 +12,7 @@ DEFAULT_SCREENSHOT_API = (
 )
 
 
-def get_mobile_screenshot(url: str, api_url: str = DEFAULT_SCREENSHOT_API, timeout: int = 90) -> bytes:
+def get_mobile_page(url: str, api_url: str = DEFAULT_SCREENSHOT_API, timeout: int = 90) -> dict:
     body = json.dumps({"url": url}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         api_url,
@@ -32,4 +32,12 @@ def get_mobile_screenshot(url: str, api_url: str = DEFAULT_SCREENSHOT_API, timeo
     encoded = data.get("imageBase64")
     if not encoded:
         raise RuntimeError("Screenshot data was not returned")
-    return base64.b64decode(encoded)
+    return {
+        "image_bytes": base64.b64decode(encoded),
+        "title": str(data.get("title") or "").strip(),
+        "final_url": str(data.get("finalUrl") or url).strip(),
+    }
+
+
+def get_mobile_screenshot(url: str, api_url: str = DEFAULT_SCREENSHOT_API, timeout: int = 90) -> bytes:
+    return get_mobile_page(url, api_url=api_url, timeout=timeout)["image_bytes"]
