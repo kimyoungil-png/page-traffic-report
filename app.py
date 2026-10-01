@@ -136,6 +136,12 @@ if uploaded:
         gemini_model = str(get_secret("GEMINI_MODEL", DEFAULT_MODEL))
         screenshot_api = str(get_secret("SCREENSHOT_API_URL", DEFAULT_SCREENSHOT_API))
 
+        if use_gemini and not gemini_key:
+            st.warning(
+                "GEMINI_API_KEYが未設定のため、Gemini分析は使わず"
+                "ルールベースの分析コメントで続行します。"
+            )
+
         report_pages = []
         progress = st.progress(0, text="レポート生成を開始します...")
 
