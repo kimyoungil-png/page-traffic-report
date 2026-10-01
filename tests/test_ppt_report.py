@@ -44,6 +44,7 @@ def _page(url: str, breadcrumb: str, report_path: str):
         "report_path": report_path,
         "breadcrumb": breadcrumb,
         "period_label": "2026/9/21~2026/9/27",
+        "gsc_period_label": "2026/9/19~2026/9/25",
         "total_current_compact": "1.2K",
         "total_ratio_label": "x1.20",
         "headline_comment": "Entry Visitは前週比で増加",
@@ -89,6 +90,12 @@ def test_build_multi_slide_report_preserves_template_relationships_and_no_autofi
 
         footer = next(shape for shape in slide.shapes if "Data：" in getattr(shape, "text", ""))
         assert "Data：2026/9/21~2026/9/27" in footer.text
+
+        gsc_period = next(
+            shape for shape in slide.shapes
+            if "GSC: 2026/9/19~2026/9/25" in getattr(shape, "text", "")
+        )
+        assert "GSC: 2026/9/19~2026/9/25" in gsc_period.text
 
         gsc_table = next(
             shape.table
