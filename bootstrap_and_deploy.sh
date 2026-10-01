@@ -21,9 +21,14 @@ if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "(unset)" ]]; then
   read -r -p "GCP project ID: " PROJECT_ID
 fi
 
-if [[ -z "${PROJECT_ID}" ]]; then
-  echo "GCP project ID is required." >&2
-  exit 1
+if ! gcloud projects describe "${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "You do not have access to project: ${PROJECT_ID}"
+  echo ""
+  echo "Projects visible to the current Google account:"
+  gcloud projects list --format='table(projectId,name)' || true
+  echo ""
+  echo "Set PROJECT_ID to one of the accessible projects and run this script again."
+  exit 2
 fi
 
 export PROJECT_ID REGION SERVICE_NAME
@@ -34,17 +39,18 @@ echo "Region:  ${REGION}"
 echo "Service: ${SERVICE_NAME}"
 echo ""
 
-# Store Gemini key safely in Secret Manager. The helper prompts with hidden input
-# when GEMINI_API_KEY is not already exported.
-bash configure_gemini_secret.sh
-
-# Deploy the Streamlit app. This creates/uses the dedicated runtime service
-# account and attaches the Gemini secret.
+# Deploy first. Corporate GCP accounts often cannot create IAM service accounts;
+# deploy_cloud_run.sh automatically falls back to the project default identity.
 sh deploy_cloud_run.sh
 
 URL="$(gcloud run services describe "${SERVICE_NAME}"   --project "${PROJECT_ID}"   --region "${REGION}"   --format='value(status.url)')"
 
-SA_EMAIL="page-traffic-report@${PROJECT_ID}.iam.gserviceaccount.com"
+RUNTIME_SA="$(gcloud run services describe "${SERVICE_NAME}"   --project "${PROJECT_ID}"   --region "${REGION}"   --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null || true)"
+
+if [[ -z "${RUNTIME_SA}" ]]; then
+  PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+  RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+fi
 
 echo ""
 echo "Checking Streamlit health..."
@@ -66,8 +72,10 @@ fi
 echo ""
 echo "========================================"
 echo "Cloud Run: ${URL}"
-echo "GSC Service Account: ${SA_EMAIL}"
+echo "GSC Service Account: ${RUNTIME_SA}"
 echo "========================================"
 echo ""
-echo "Final manual step:"
 echo "Add the GSC Service Account above as a user of the Samsung JP Search Console property."
+echo ""
+echo "Gemini is optional for the first deployment."
+echo "If GEMINI_API_KEY is not configured, the app will use the rule-based analysis fallback."
