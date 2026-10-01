@@ -7,6 +7,7 @@ TIMEOUT="${TIMEOUT:-900}"
 MEMORY="${MEMORY:-1Gi}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-page-traffic-report}"
 GEMINI_SECRET_NAME="${GEMINI_SECRET_NAME:-page-traffic-report-gemini-api-key}"
+GSC_USER_SECRET_NAME="${GSC_USER_SECRET_NAME:-page-traffic-report-gsc-user-oauth}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
 
 if ! command -v gcloud >/dev/null 2>&1; then
@@ -58,6 +59,16 @@ fi
 
 # Attach Gemini only when a preconfigured secret exists and the runtime identity
 # can read it. Otherwise deploy normally; the app uses its rule-based fallback.
+if gcloud secrets describe "$GSC_USER_SECRET_NAME" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  if [ "$USE_DEDICATED_SA" -eq 1 ]; then
+    gcloud secrets add-iam-policy-binding "$GSC_USER_SECRET_NAME" \
+      --project "$PROJECT_ID" \
+      --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+      --role "roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
+  fi
+  set -- "$@" --set-secrets "GSC_AUTHORIZED_USER_JSON=$GSC_USER_SECRET_NAME:latest"
+fi
+
 if gcloud secrets describe "$GEMINI_SECRET_NAME" --project "$PROJECT_ID" >/dev/null 2>&1; then
   if [ "$USE_DEDICATED_SA" -eq 1 ]; then
     gcloud secrets add-iam-policy-binding "$GEMINI_SECRET_NAME"       --project "$PROJECT_ID"       --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL"       --role "roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
