@@ -21,7 +21,7 @@ from gsc_client import (
 )
 from page_fetcher import fetch_meta_title
 from ppt_report import build_ppt_report
-from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_screenshot
+from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_page
 from traffic_analyzer import (
     build_analysis_payload,
     build_table_rows,
@@ -224,12 +224,31 @@ if uploaded:
                     warnings.append(f"Adobe URL補完失敗: {exc}")
 
             meta_title = ""
-            with st.spinner(f"[{idx}/{len(parsed['pages'])}] Title取得: {url}"):
-                try:
-                    meta = fetch_meta_title(url)
-                    meta_title = meta.get("title", "")
-                except Exception as exc:
-                    warnings.append(f"Title取得失敗: {exc}")
+            screenshot_bytes = None
+
+            # Use Chromium (the same browser that creates the screenshot) as
+            # the primary title source. Samsung pages can return incomplete
+            # HTML to plain HTTP clients even when they render correctly in a
+            # browser.
+            if use_screenshot:
+                with st.spinner(f"[{idx}/{len(parsed['pages'])}] Page取得: {url}"):
+                    try:
+                        snapshot = get_mobile_page(url, api_url=screenshot_api)
+                        screenshot_bytes = snapshot.get("image_bytes")
+                        meta_title = str(snapshot.get("title") or "").strip()
+                        browser_final_url = str(snapshot.get("final_url") or "").strip()
+                        if browser_final_url and browser_final_url != url:
+                            url = browser_final_url
+                    except Exception as exc:
+                        warnings.append(f"Browser取得失敗: {exc}")
+
+            if not meta_title:
+                with st.spinner(f"[{idx}/{len(parsed['pages'])}] Title取得: {url}"):
+                    try:
+                        meta = fetch_meta_title(url)
+                        meta_title = meta.get("title", "")
+                    except Exception as exc:
+                        warnings.append(f"Title取得失敗: {exc}")
 
             gsc_queries = []
             if gsc_service:
@@ -247,14 +266,6 @@ if uploaded:
                         st.error(f"GSC取得失敗: {url}")
                         st.exception(exc)
                         st.stop()
-
-            screenshot_bytes = None
-            if use_screenshot:
-                with st.spinner(f"[{idx}/{len(parsed['pages'])}] Screenshot取得: {url}"):
-                    try:
-                        screenshot_bytes = get_mobile_screenshot(url, api_url=screenshot_api)
-                    except Exception as exc:
-                        warnings.append(f"Screenshot取得失敗: {exc}")
 
             share_line = channel_share_line(page)
             secondary_line = cta_summary_line(page)
