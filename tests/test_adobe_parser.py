@@ -1,8 +1,8 @@
 from datetime import date
 from pathlib import Path
 
-from adobe_parser import parse_adobe_csv
-from url_utils import breadcrumb_label, is_probable_page_url, normalize_adobe_url
+from adobe_parser import _parse_matrix, parse_adobe_csv
+from url_utils import breadcrumb_label, normalize_adobe_url
 
 
 def test_normalize_adobe_url():
@@ -33,12 +33,39 @@ def test_corrected_csv_sections():
 
 
 
-def test_adobe_label_is_not_a_url():
-    assert is_probable_page_url("Entry Pages") is False
-    assert is_probable_page_url("Entry URL without Parameter") is False
-    assert is_probable_page_url(
+
+def test_parse_matrix_skips_entry_pages_but_keeps_url():
+    channel_row = [
+        "",
+        "変動",
+        "[1] Organic",
+        "[2] Direct",
+        "[3] Referral",
+        "[4] Owned Social",
+        "[5] Social Network Referrals",
+        "[6] CRM",
+        "[7] Paid Search",
+        "[8] Display AD",
+        "[計] Total",
+        "[1] Organic",
+        "[2] Direct",
+        "[3] Referral",
+        "[4] Owned Social",
+        "[5] Social Network Referrals",
+        "[6] CRM",
+        "[7] Paid Search",
+        "[8] Display AD",
+        "[計] Total",
+    ]
+    label_row = ["Entry Pages", "0"] + ["0"] * 18
+    url_row = [
+        "www.samsung.com/jp/support/mobile-devices/galaxy-device-lock-screen-features",
+        "1",
+    ] + ["0"] * 18
+
+    parsed = _parse_matrix([channel_row, label_row, url_row])
+    assert "Entry Pages" not in parsed["rows"]
+    assert (
         "www.samsung.com/jp/support/mobile-devices/galaxy-device-lock-screen-features"
-    ) is True
-    assert is_probable_page_url(
-        "https://www.samsung.com/jp/explore/hint/galaxy-zoom-moon-shot/"
-    ) is True
+        in parsed["rows"]
+    )
