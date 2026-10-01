@@ -19,6 +19,14 @@ fi
 
 SERVICE_ACCOUNT_EMAIL="$SERVICE_ACCOUNT_NAME@$PROJECT_ID.iam.gserviceaccount.com"
 
+if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT_EMAIL" \
+  --project "$PROJECT_ID" >/dev/null 2>&1; then
+  echo "Creating runtime service account: $SERVICE_ACCOUNT_EMAIL"
+  gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" \
+    --project "$PROJECT_ID" \
+    --display-name "Page Traffic Report"
+fi
+
 if [[ -z "${GEMINI_API_KEY:-}" ]]; then
   read -r -s -p "Gemini API key: " GEMINI_API_KEY
   echo
