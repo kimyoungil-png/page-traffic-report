@@ -1,0 +1,132 @@
+name: Deploy to Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "GCP region"
+        required: false
+        default: "asia-northeast1"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Enable required APIs
+        run: |
+          set -euo pipefail
+          gcloud services enable             run.googleapis.com             cloudbuild.googleapis.com             artifactregistry.googleapis.com             secretmanager.googleapis.com             iam.googleapis.com             searchconsole.googleapis.com
+
+      - name: Ensure runtime service account
+        run: |
+          set -euo pipefail
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          SA_NAME="page-traffic-report"
+          SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+
+          if ! gcloud iam service-accounts describe "${SA_EMAIL}" --project "${PROJECT}" >/dev/null 2>&1; then
+            gcloud iam service-accounts create "${SA_NAME}"               --project "${PROJECT}"               --display-name "Page Traffic Report"
+          fi
+
+      - name: Configure Gemini secret
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          SA_EMAIL="page-traffic-report@${PROJECT}.iam.gserviceaccount.com"
+          SECRET_NAME="page-traffic-report-gemini-api-key"
+
+          if [ -z "${GEMINI_API_KEY}" ]; then
+            echo "GEMINI_API_KEY is not configured in this repository."
+            echo "The app can deploy, but Gemini analysis will use the rule-based fallback."
+            exit 0
+          fi
+
+          if ! gcloud secrets describe "${SECRET_NAME}" --project "${PROJECT}" >/dev/null 2>&1; then
+            gcloud secrets create "${SECRET_NAME}"               --project "${PROJECT}"               --replication-policy automatic
+          fi
+
+          printf '%s' "${GEMINI_API_KEY}" | gcloud secrets versions add "${SECRET_NAME}"             --project "${PROJECT}"             --data-file=-
+
+          gcloud secrets add-iam-policy-binding "${SECRET_NAME}"             --project "${PROJECT}"             --member "serviceAccount:${SA_EMAIL}"             --role "roles/secretmanager.secretAccessor" >/dev/null
+
+      - name: Deploy
+        env:
+          REGION: ${{ github.event.inputs.region }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          REGION="${REGION:-asia-northeast1}"
+          SERVICE_NAME="page-traffic-report"
+          SA_EMAIL="page-traffic-report@${PROJECT}.iam.gserviceaccount.com"
+          SECRET_NAME="page-traffic-report-gemini-api-key"
+
+          COMMON_ARGS=(
+            --project "${PROJECT}"
+            --source .
+            --region "${REGION}"
+            --allow-unauthenticated
+            --service-account "${SA_EMAIL}"
+            --memory 1Gi
+            --cpu 1
+            --concurrency 10
+            --timeout 900
+            --max-instances 5
+            --set-env-vars "TZ=Asia/Tokyo"
+          )
+
+          if [ -n "${GEMINI_API_KEY}" ]; then
+            gcloud run deploy "${SERVICE_NAME}"               "${COMMON_ARGS[@]}"               --set-secrets "GEMINI_API_KEY=${SECRET_NAME}:latest"
+          else
+            gcloud run deploy "${SERVICE_NAME}" "${COMMON_ARGS[@]}"
+          fi
+
+      - name: Smoke test and output
+        env:
+          REGION: ${{ github.event.inputs.region }}
+        run: |
+          set -euo pipefail
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          REGION="${REGION:-asia-northeast1}"
+          SERVICE_NAME="page-traffic-report"
+          SA_EMAIL="page-traffic-report@${PROJECT}.iam.gserviceaccount.com"
+
+          URL="$(gcloud run services describe "${SERVICE_NAME}"             --project "${PROJECT}"             --region "${REGION}"             --format='value(status.url)')"
+
+          ok=0
+          for i in $(seq 1 12); do
+            if curl -fsS "${URL}/_stcore/health" >/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "${ok}" -ne 1 ]; then
+            echo "Cloud Run health check failed: ${URL}" >&2
+            exit 1
+          fi
+
+          {
+            echo "## Page Traffic Report"
+            echo ""
+            echo "- Cloud Run: ${URL}"
+            echo "- Runtime Service Account: ${SA_EMAIL}"
+            echo "- GSC: add the Runtime Service Account as a user of the Samsung JP Search Console property."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "Cloud Run URL: ${URL}"
+          echo "GSC runtime service account: ${SA_EMAIL}"
