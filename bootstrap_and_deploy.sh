@@ -17,18 +17,36 @@ if [[ -z "${ACTIVE_ACCOUNT}" ]]; then
   exit 1
 fi
 
-if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "(unset)" ]]; then
-  read -r -p "GCP project ID: " PROJECT_ID
-fi
+choose_project() {
+  mapfile -t PROJECTS < <(gcloud projects list --format='value(projectId)' 2>/dev/null)
+  if [[ "${#PROJECTS[@]}" -eq 0 ]]; then
+    echo "No accessible Google Cloud projects were found for the current account." >&2
+    exit 2
+  fi
 
-if ! gcloud projects describe "${PROJECT_ID}" >/dev/null 2>&1; then
-  echo "You do not have access to project: ${PROJECT_ID}"
+  echo "Accessible Google Cloud projects:"
+  local i=1
+  for project in "${PROJECTS[@]}"; do
+    name="$(gcloud projects describe "$project" --format='value(name)' 2>/dev/null || true)"
+    printf "  %d) %s  %s\n" "$i" "$project" "$name"
+    i=$((i + 1))
+  done
+
   echo ""
-  echo "Projects visible to the current Google account:"
-  gcloud projects list --format='table(projectId,name)' || true
+  read -r -p "Select project number: " choice
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#PROJECTS[@]} )); then
+    echo "Invalid selection." >&2
+    exit 2
+  fi
+  PROJECT_ID="${PROJECTS[$((choice - 1))]}"
+}
+
+if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "(unset)" ]]; then
+  choose_project
+elif ! gcloud projects describe "${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "Current PROJECT_ID is not accessible: ${PROJECT_ID}"
   echo ""
-  echo "Set PROJECT_ID to one of the accessible projects and run this script again."
-  exit 2
+  choose_project
 fi
 
 export PROJECT_ID REGION SERVICE_NAME
