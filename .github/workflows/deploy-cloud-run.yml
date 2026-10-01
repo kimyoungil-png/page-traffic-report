@@ -1,6 +1,10 @@
 name: Deploy to Cloud Run
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-cloud-run.yml"
   workflow_dispatch:
     inputs:
       region:
@@ -15,20 +19,45 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check deployment credentials
+        id: credentials
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${GCP_PROJECT_ID}" ] || missing="${missing} GCP_PROJECT_ID"
+          [ -n "${GCP_SA_KEY}" ] || missing="${missing} GCP_SA_KEY"
+          if [ -n "${missing}" ]; then
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "Missing repository secrets:${missing}"
+            {
+              echo "## Cloud Run deployment"
+              echo ""
+              echo "Deployment not started because required Repository Secrets are missing: ${missing}"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          fi
 
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.ready == 'true'
       - name: Setup gcloud
+        if: steps.credentials.outputs.ready == 'true'
         uses: google-github-actions/setup-gcloud@v1
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
       - name: Enable required APIs
+        if: steps.credentials.outputs.ready == 'true'
         run: |
           set -euo pipefail
           gcloud services enable             run.googleapis.com             cloudbuild.googleapis.com             artifactregistry.googleapis.com             secretmanager.googleapis.com             iam.googleapis.com             searchconsole.googleapis.com
 
       - name: Ensure runtime service account
+        if: steps.credentials.outputs.ready == 'true'
         run: |
           set -euo pipefail
           PROJECT="${{ secrets.GCP_PROJECT_ID }}"
@@ -40,6 +69,7 @@ jobs:
           fi
 
       - name: Configure Gemini secret
+        if: steps.credentials.outputs.ready == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -63,6 +93,7 @@ jobs:
           gcloud secrets add-iam-policy-binding "${SECRET_NAME}"             --project "${PROJECT}"             --member "serviceAccount:${SA_EMAIL}"             --role "roles/secretmanager.secretAccessor" >/dev/null
 
       - name: Deploy
+        if: steps.credentials.outputs.ready == 'true'
         env:
           REGION: ${{ github.event.inputs.region }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -95,6 +126,7 @@ jobs:
           fi
 
       - name: Smoke test and output
+        if: steps.credentials.outputs.ready == 'true'
         env:
           REGION: ${{ github.event.inputs.region }}
         run: |
