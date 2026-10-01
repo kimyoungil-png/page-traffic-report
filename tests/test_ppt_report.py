@@ -91,16 +91,11 @@ def test_build_multi_slide_report_preserves_template_relationships_and_no_autofi
         footer = next(shape for shape in slide.shapes if "Data：" in getattr(shape, "text", ""))
         assert "Data：2026/9/21~2026/9/27" in footer.text
 
-        gsc_period = next(
-            shape for shape in slide.shapes
-            if "GSC: 2026/9/19~2026/9/25" in getattr(shape, "text", "")
-        )
-        assert "GSC: 2026/9/19~2026/9/25" in gsc_period.text
-
         gsc_table = next(
             shape.table
             for shape in slide.shapes
             if shape.has_table and len(shape.table.rows) == 12 and len(shape.table.columns) == 3
         )
+        assert "GSC: 2026/9/19~2026/9/25" in gsc_table.cell(0, 1).text
         assert gsc_table.cell(2, 1).text == "sample query"
         assert gsc_table.cell(2, 2).text == "9"
