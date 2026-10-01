@@ -26,6 +26,15 @@ fi
 
 SERVICE_ACCOUNT_EMAIL="$SERVICE_ACCOUNT_NAME@$PROJECT_ID.iam.gserviceaccount.com"
 
+gcloud services enable \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  iam.googleapis.com \
+  searchconsole.googleapis.com \
+  --project "$PROJECT_ID" >/dev/null
+
 if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT_EMAIL" \
   --project "$PROJECT_ID" >/dev/null 2>&1; then
   echo "Creating runtime service account: $SERVICE_ACCOUNT_EMAIL"
@@ -49,6 +58,9 @@ if gcloud secrets describe "$GEMINI_SECRET_NAME" \
     --service-account "$SERVICE_ACCOUNT_EMAIL" \
     --timeout "$TIMEOUT" \
     --memory "$MEMORY" \
+    --cpu 1 \
+    --concurrency 10 \
+    --max-instances 5 \
     --set-env-vars "TZ=Asia/Tokyo" \
     --set-secrets "GEMINI_API_KEY=$GEMINI_SECRET_NAME:latest"
 else
@@ -60,6 +72,9 @@ else
     --service-account "$SERVICE_ACCOUNT_EMAIL" \
     --timeout "$TIMEOUT" \
     --memory "$MEMORY" \
+    --cpu 1 \
+    --concurrency 10 \
+    --max-instances 5 \
     --set-env-vars "TZ=Asia/Tokyo"
 
   echo ""
