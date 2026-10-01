@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
+
+from url_utils import normalize_adobe_url, normalize_adobe_url_prefix
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
@@ -213,4 +216,120 @@ def validate_gsc_access(
     return {
         "row_count": len(result.get("rows", []) or []),
         "response_aggregation_type": result.get("responseAggregationType"),
+    }
+
+
+def resolve_adobe_page_url(
+    service,
+    site_url: str,
+    raw_url: str,
+    end_date: str,
+    lookback_days: int = 120,
+    row_limit: int = 50,
+) -> dict[str, Any]:
+    """Recover a full page URL when Adobe truncates a long URL.
+
+    Search Console stores the full page URL. We query page-dimension rows whose
+    URL starts with the Adobe prefix over a wider lookback window.
+
+    Resolution rules:
+    - exact normalized URL found -> keep it
+    - one prefix candidate -> use it
+    - multiple candidates -> use the dominant candidate only when its clicks
+      are >=10x the next candidate (or the next candidate has zero clicks)
+    - otherwise keep the Adobe URL and report ambiguity
+    """
+    normalized = normalize_adobe_url(raw_url)
+    prefix = normalize_adobe_url_prefix(raw_url).rstrip("/")
+    if not prefix:
+        return {
+            "url": normalized,
+            "resolved": False,
+            "reason": "empty",
+            "candidate_count": 0,
+            "candidates": [],
+        }
+
+    end = date.fromisoformat(end_date)
+    start = end - timedelta(days=max(1, lookback_days) - 1)
+
+    expression = "^" + re.escape(prefix)
+    body = {
+        "startDate": start.isoformat(),
+        "endDate": end.isoformat(),
+        "dimensions": ["page"],
+        "dimensionFilterGroups": [
+            {
+                "groupType": "and",
+                "filters": [
+                    {
+                        "dimension": "page",
+                        "operator": "includingRegex",
+                        "expression": expression,
+                    }
+                ],
+            }
+        ],
+        "rowLimit": row_limit,
+        "type": "web",
+        "dataState": "final",
+    }
+    result = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+
+    candidates: list[dict[str, Any]] = []
+    for row in result.get("rows", []) or []:
+        keys = row.get("keys") or []
+        if not keys:
+            continue
+        candidate_url = str(keys[0])
+        candidates.append(
+            {
+                "url": candidate_url,
+                "clicks": float(row.get("clicks", 0) or 0),
+                "impressions": float(row.get("impressions", 0) or 0),
+            }
+        )
+
+    candidates.sort(key=lambda item: (item["clicks"], item["impressions"]), reverse=True)
+
+    if any(item["url"] == normalized for item in candidates):
+        return {
+            "url": normalized,
+            "resolved": False,
+            "reason": "exact",
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+
+    if len(candidates) == 1:
+        return {
+            "url": candidates[0]["url"],
+            "resolved": candidates[0]["url"] != normalized,
+            "reason": "unique_prefix_match",
+            "candidate_count": 1,
+            "candidates": candidates,
+        }
+
+    if len(candidates) >= 2:
+        top = candidates[0]
+        second = candidates[1]
+        dominant = (
+            top["clicks"] > 0
+            and (second["clicks"] <= 0 or top["clicks"] >= second["clicks"] * 10)
+        )
+        if dominant:
+            return {
+                "url": top["url"],
+                "resolved": top["url"] != normalized,
+                "reason": "dominant_prefix_match",
+                "candidate_count": len(candidates),
+                "candidates": candidates,
+            }
+
+    return {
+        "url": normalized,
+        "resolved": False,
+        "reason": "ambiguous" if candidates else "no_match",
+        "candidate_count": len(candidates),
+        "candidates": candidates,
     }
