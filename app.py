@@ -44,6 +44,14 @@ st.write(
 )
 
 
+def configured_status(label: str, ok: bool, detail: str = ""):
+    icon = "✅" if ok else "⚪"
+    text = f"{icon} **{label}**"
+    if detail:
+        text += f"  \n{detail}"
+    st.markdown(text)
+
+
 def get_secret(name: str, default=None):
     try:
         value = st.secrets.get(name)
@@ -98,6 +106,27 @@ def period_label(parsed: dict) -> str:
 def gsc_period_label(start: date, end: date) -> str:
     return f"{start.year}/{start.month}/{start.day}~{end.year}/{end.month}/{end.day}"
 
+
+status1, status2, status3 = st.columns(3)
+with status1:
+    configured_status(
+        "GSC",
+        bool(get_secret("GSC_AUTHORIZED_USER_JSON") or get_secret("GSC_SERVICE_ACCOUNT_JSON")),
+        "OAuth/認証設定済み" if (get_secret("GSC_AUTHORIZED_USER_JSON") or get_secret("GSC_SERVICE_ACCOUNT_JSON")) else "未設定",
+    )
+with status2:
+    configured_status(
+        "Gemini",
+        bool(get_secret("GEMINI_API_KEY")),
+        "AI分析有効" if get_secret("GEMINI_API_KEY") else "ルールベース分析",
+    )
+with status3:
+    browser_api = str(get_secret("SCREENSHOT_API_URL", DEFAULT_SCREENSHOT_API) or "")
+    configured_status(
+        "Browser",
+        bool(browser_api),
+        "Title + Screenshot取得",
+    )
 
 uploaded = st.file_uploader("Adobe Analytics CSV", type=["csv"])
 
@@ -189,6 +218,7 @@ if uploaded:
             )
 
         report_pages = []
+        resolved_url_count = 0
         progress = st.progress(0, text="レポート生成を開始します...")
 
         for idx, page in enumerate(parsed["pages"], start=1):
@@ -214,6 +244,7 @@ if uploaded:
                         warnings.append(
                             f"Adobe URLをGSCから補完: {url} → {resolved_url}"
                         )
+                        resolved_url_count += 1
                         url = resolved_url
                     elif resolved.get("reason") == "ambiguous":
                         warnings.append(
@@ -226,21 +257,20 @@ if uploaded:
             meta_title = ""
             screenshot_bytes = None
 
-            # Use Chromium (the same browser that creates the screenshot) as
-            # the primary title source. Samsung pages can return incomplete
-            # HTML to plain HTTP clients even when they render correctly in a
-            # browser.
-            if use_screenshot:
-                with st.spinner(f"[{idx}/{len(parsed['pages'])}] Page取得: {url}"):
-                    try:
-                        snapshot = get_mobile_page(url, api_url=screenshot_api)
+            # Chromium is the primary source for Title even when the user does
+            # not want the screenshot embedded in the PPT. Samsung pages can
+            # render a valid browser title while plain HTTP returns incomplete HTML.
+            with st.spinner(f"[{idx}/{len(parsed['pages'])}] Page取得: {url}"):
+                try:
+                    snapshot = get_mobile_page(url, api_url=screenshot_api)
+                    if use_screenshot:
                         screenshot_bytes = snapshot.get("image_bytes")
-                        meta_title = str(snapshot.get("title") or "").strip()
-                        browser_final_url = str(snapshot.get("final_url") or "").strip()
-                        if browser_final_url and browser_final_url != url:
-                            url = browser_final_url
-                    except Exception as exc:
-                        warnings.append(f"Browser取得失敗: {exc}")
+                    meta_title = str(snapshot.get("title") or "").strip()
+                    browser_final_url = str(snapshot.get("final_url") or "").strip()
+                    if browser_final_url and browser_final_url != url:
+                        url = browser_final_url
+                except Exception as exc:
+                    warnings.append(f"Browser取得失敗: {exc}")
 
             if not meta_title:
                 with st.spinner(f"[{idx}/{len(parsed['pages'])}] Title取得: {url}"):
@@ -323,7 +353,12 @@ if uploaded:
 
         st.session_state["report_pages"] = report_pages
         st.session_state["ppt_bytes"] = ppt_bytes
-        st.success("Page Traffic Reportを生成しました。")
+        st.success(
+            f"Page Traffic Reportを生成しました。 "
+            f"URL補完 {resolved_url_count}件 / "
+            f"Gemini {'ON' if gemini_key else 'Fallback'} / "
+            f"{len(report_pages)}ページ"
+        )
 
 if st.session_state.get("report_pages"):
     pages = st.session_state["report_pages"]
