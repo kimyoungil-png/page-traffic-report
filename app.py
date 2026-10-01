@@ -52,8 +52,14 @@ def get_gsc_service():
         mapping = st.secrets.get("gsc_service_account")
     except Exception:
         pass
-    info = load_service_account_info(json_text=json_text, mapping=mapping)
-    return build_gsc_service(info)
+
+    # Prefer explicit Service Account JSON when configured.
+    # Otherwise use Application Default Credentials (recommended on Cloud Run).
+    if json_text or mapping:
+        info = load_service_account_info(json_text=json_text, mapping=mapping)
+        return build_gsc_service(info)
+
+    return build_gsc_service()
 
 
 def report_anchor_date() -> date:
