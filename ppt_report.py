@@ -243,6 +243,21 @@ def _replace_header(slide, page: dict[str, Any]) -> None:
         for extra in tf.paragraphs[2:]:
             _set_paragraph_text_preserve_style(extra, "", 11.0, BLACK)
 
+    gsc_period_shape = _find_text_shape(
+        slide,
+        lambda text, _s: text.strip() == "Last Week",
+    )
+    if gsc_period_shape is not None:
+        gsc_period = str(page.get("gsc_period_label") or "").strip()
+        if gsc_period:
+            _set_simple_text(
+                gsc_period_shape,
+                f"GSC: {gsc_period}",
+                7.0,
+                BLACK,
+                True,
+            )
+
     meta_shape = _find_text_shape(slide, lambda text, _s: text.startswith("Title :"))
     if meta_shape is not None:
         meta_title = page.get("meta_title") or "—"
