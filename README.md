@@ -76,7 +76,7 @@ DockerfileはCloud Run対応済み。
 ```bash
 export SERVICE_NAME=page-traffic-report
 export REGION=asia-northeast1
-./deploy_cloud_run.sh
+sh deploy_cloud_run.sh
 ```
 
 deploy scriptは専用runtime Service Account
@@ -90,8 +90,7 @@ deploy scriptは専用runtime Service Account
 Gemini Secret Manager設定用のhelperも用意済み。
 
 ```bash
-chmod +x configure_gemini_secret.sh
-./configure_gemini_secret.sh
+bash configure_gemini_secret.sh
 ```
 
 API Keyは画面上で非表示入力され、GitHubには保存しない。
