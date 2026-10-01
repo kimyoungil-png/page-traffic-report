@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from adobe_parser import parse_adobe_csv
-from url_utils import breadcrumb_label, normalize_adobe_url
+from url_utils import breadcrumb_label, is_probable_page_url, normalize_adobe_url
 
 
 def test_normalize_adobe_url():
@@ -30,3 +30,15 @@ def test_corrected_csv_sections():
     assert first['current']['entry']['Total'] == 5041
     assert first['current']['cta']['Total'] == 2
     assert round(first['current']['bounce']['Total'], 1) == 12.3
+
+
+
+def test_adobe_label_is_not_a_url():
+    assert is_probable_page_url("Entry Pages") is False
+    assert is_probable_page_url("Entry URL without Parameter") is False
+    assert is_probable_page_url(
+        "www.samsung.com/jp/support/mobile-devices/galaxy-device-lock-screen-features"
+    ) is True
+    assert is_probable_page_url(
+        "https://www.samsung.com/jp/explore/hint/galaxy-zoom-moon-shot/"
+    ) is True
