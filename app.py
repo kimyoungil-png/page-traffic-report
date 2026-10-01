@@ -1,0 +1,259 @@
+from __future__ import annotations
+
+import os
+from datetime import date
+
+import pandas as pd
+import streamlit as st
+
+from adobe_parser import parse_adobe_csv
+from gemini_analyzer import DEFAULT_MODEL, generate_traffic_insight
+from gsc_client import build_gsc_service, fetch_top_queries, load_service_account_info, resolve_site_url
+from page_fetcher import fetch_meta_title
+from ppt_report import build_ppt_report
+from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_screenshot
+from traffic_analyzer import (
+    build_analysis_payload,
+    build_table_rows,
+    channel_share_line,
+    cta_summary_line,
+    fallback_headline,
+    format_compact,
+    format_ratio,
+)
+from url_utils import breadcrumb_label, report_path
+
+
+st.set_page_config(page_title="Page Traffic Report", page_icon="📊", layout="wide")
+st.title("Page Traffic Report")
+st.caption("Adobe Analytics × Google Search Console × Gemini")
+st.write(
+    "Adobe Analytics CSVをアップロードすると、CSV内のURL行数に合わせて、"
+    "GSC Query Top10・ページタイトル・モバイルスクリーンショット・分析コメントを取得し、"
+    "PowerPointレポートを生成します。"
+)
+
+
+def get_secret(name: str, default=None):
+    try:
+        value = st.secrets.get(name)
+        if value is not None:
+            return value
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+def get_gsc_service():
+    json_text = get_secret("GSC_SERVICE_ACCOUNT_JSON")
+    mapping = None
+    try:
+        mapping = st.secrets.get("gsc_service_account")
+    except Exception:
+        pass
+    info = load_service_account_info(json_text=json_text, mapping=mapping)
+    return build_gsc_service(info)
+
+
+def report_anchor_date() -> date:
+    return date.today()
+
+
+def period_label(parsed: dict) -> str:
+    start = date.fromisoformat(parsed["last_week_start"])
+    end = date.fromisoformat(parsed["last_week_end"])
+    return f"{start.year}/{start.month}/{start.day}~{end.year}/{end.month}/{end.day}"
+
+
+uploaded = st.file_uploader("Adobe Analytics CSV", type=["csv"])
+
+if uploaded:
+    try:
+        parsed = parse_adobe_csv(
+            uploaded.getvalue(),
+            top_n=None,
+            as_of_date=report_anchor_date(),
+        )
+    except Exception as exc:
+        st.error(f"Adobe CSVを解析できませんでした: {exc}")
+        st.stop()
+
+    st.success(
+        f"URL {len(parsed['pages'])}件を取得しました。 "
+        f"Last Week: {period_label(parsed)}"
+    )
+    if parsed.get("warnings"):
+        for warning in parsed["warnings"]:
+            st.warning(warning)
+
+    preview = []
+    for i, page in enumerate(parsed["pages"], start=1):
+        preview.append(
+            {
+                "No": i,
+                "URL": page["url"],
+                "Last Week Entry Visit": page["current"]["entry"].get("Total", 0),
+                "2 weeks ago": page["previous"]["entry"].get("Total", 0),
+            }
+        )
+    st.dataframe(pd.DataFrame(preview), use_container_width=True, hide_index=True)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        use_gsc = st.checkbox("Google Search Console API", value=True)
+    with col2:
+        use_gemini = st.checkbox("Gemini分析", value=True)
+    with col3:
+        use_screenshot = st.checkbox("モバイルスクリーンショット", value=True)
+
+    if st.button("Traffic Report生成", type="primary"):
+        gsc_service = None
+        gsc_site_url = ""
+        configured_gsc_site_url = str(get_secret("GSC_SITE_URL", "") or "").strip()
+        if use_gsc:
+            try:
+                gsc_service = get_gsc_service()
+                first_url = parsed["pages"][0]["url"] if parsed.get("pages") else ""
+                gsc_site_url = resolve_site_url(
+                    gsc_service,
+                    first_url,
+                    configured_site_url=configured_gsc_site_url or None,
+                )
+                st.info(f"GSC property: {gsc_site_url}")
+            except Exception as exc:
+                gsc_service = None
+                st.warning(f"GSC APIを初期化できないため、Query Top10なしで続行します: {exc}")
+
+        gemini_key = get_secret("GEMINI_API_KEY") if use_gemini else None
+        gemini_model = str(get_secret("GEMINI_MODEL", DEFAULT_MODEL))
+        screenshot_api = str(get_secret("SCREENSHOT_API_URL", DEFAULT_SCREENSHOT_API))
+
+        report_pages = []
+        progress = st.progress(0, text="レポート生成を開始します...")
+
+        for idx, page in enumerate(parsed["pages"], start=1):
+            url = page["url"]
+            warnings = []
+
+            meta_title = ""
+            with st.spinner(f"[{idx}/{len(parsed['pages'])}] Title取得: {url}"):
+                try:
+                    meta = fetch_meta_title(url)
+                    meta_title = meta.get("title", "")
+                except Exception as exc:
+                    warnings.append(f"Title取得失敗: {exc}")
+
+            gsc_queries = []
+            if gsc_service:
+                with st.spinner(f"[{idx}/{len(parsed['pages'])}] GSC取得: {url}"):
+                    try:
+                        gsc_queries = fetch_top_queries(
+                            gsc_service,
+                            gsc_site_url,
+                            url,
+                            parsed["last_week_start"],
+                            parsed["last_week_end"],
+                            row_limit=10,
+                        )
+                    except Exception as exc:
+                        warnings.append(f"GSC取得失敗: {exc}")
+
+            screenshot_bytes = None
+            if use_screenshot:
+                with st.spinner(f"[{idx}/{len(parsed['pages'])}] Screenshot取得: {url}"):
+                    try:
+                        screenshot_bytes = get_mobile_screenshot(url, api_url=screenshot_api)
+                    except Exception as exc:
+                        warnings.append(f"Screenshot取得失敗: {exc}")
+
+            share_line = channel_share_line(page)
+            secondary_line = cta_summary_line(page)
+            analysis_payload = build_analysis_payload(page, gsc_queries)
+            headline = fallback_headline(page)
+            detail_comment = ""
+            gemini_used = "fallback"
+            if gemini_key:
+                with st.spinner(f"[{idx}/{len(parsed['pages'])}] Gemini分析: {url}"):
+                    insight = generate_traffic_insight(
+                        page=page,
+                        analysis_payload=analysis_payload,
+                        api_key=gemini_key,
+                        model=gemini_model,
+                    )
+                    headline = insight.get("headline_comment") or headline
+                    detail_comment = insight.get("detail_comment") or ""
+                    gemini_used = insight.get("model", "")
+                    if insight.get("error"):
+                        warnings.append(f"Gemini fallback: {insight['error']}")
+
+            if not secondary_line and detail_comment:
+                secondary_line = detail_comment
+
+            prev_total = int(page["previous"]["entry"].get("Total", 0) or 0)
+            curr_total = int(page["current"]["entry"].get("Total", 0) or 0)
+            report_pages.append(
+                {
+                    "url": url,
+                    "raw_url": page["raw_url"],
+                    "meta_title": meta_title,
+                    "report_path": report_path(url),
+                    "breadcrumb": breadcrumb_label(url),
+                    "period_label": period_label(parsed),
+                    "total_current": curr_total,
+                    "total_previous": prev_total,
+                    "total_current_compact": format_compact(curr_total),
+                    "total_ratio_label": format_ratio(curr_total, prev_total),
+                    "headline_comment": headline,
+                    "detail_comment": detail_comment,
+                    "share_line": share_line,
+                    "secondary_line": secondary_line,
+                    "table_rows": build_table_rows(page),
+                    "gsc_queries": gsc_queries,
+                    "screenshot_bytes": screenshot_bytes,
+                    "gemini_model": gemini_used,
+                    "warnings": warnings,
+                }
+            )
+            progress.progress(idx / len(parsed["pages"]), text=f"{idx}/{len(parsed['pages'])}ページ処理完了")
+
+        with st.spinner("PowerPointを生成中..."):
+            ppt_bytes = build_ppt_report(report_pages)
+
+        st.session_state["report_pages"] = report_pages
+        st.session_state["ppt_bytes"] = ppt_bytes
+        st.success("Page Traffic Reportを生成しました。")
+
+if st.session_state.get("report_pages"):
+    pages = st.session_state["report_pages"]
+    st.divider()
+    st.header("Report Preview")
+    st.download_button(
+        "PowerPointをダウンロード",
+        data=st.session_state["ppt_bytes"],
+        file_name="page-traffic-report.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+    tabs = st.tabs([f"{i}. {p['breadcrumb']}" for i, p in enumerate(pages, start=1)])
+    for tab, page in zip(tabs, pages):
+        with tab:
+            st.subheader(page["report_path"])
+            st.markdown(f"**Title:** {page['meta_title'] or '取得できず'}")
+            st.markdown(f"**Analysis:** {page['headline_comment']}")
+            st.write(page["share_line"])
+            if page["secondary_line"]:
+                st.write(page["secondary_line"])
+
+            left, right = st.columns([1, 2.4])
+            with left:
+                if page.get("screenshot_bytes"):
+                    st.image(page["screenshot_bytes"], use_container_width=True)
+            with right:
+                table_df = pd.DataFrame(page["table_rows"])
+                st.dataframe(table_df, use_container_width=True, hide_index=True)
+                st.markdown("#### Organic Search Queries Top10")
+                st.dataframe(pd.DataFrame(page["gsc_queries"]), use_container_width=True, hide_index=True)
+            if page.get("warnings"):
+                with st.expander("取得時のWarning"):
+                    for warning in page["warnings"]:
+                        st.write(warning)
