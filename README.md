@@ -45,10 +45,11 @@ GSCは2〜3日程度のデータ遅延を考慮し、アプリ実行日を基準
 
 PowerPoint右側のGSC表には `GSC: YYYY/M/D~YYYY/M/D` と実際の取得期間を表示する。Adobe Analyticsの `Data：...` 期間とは月曜・火曜のみ数日ずれる。
 
-Cloud Runでは **Application Default Credentials (ADC)** を推奨する。
+Cloud Runでは、Search Console側でユーザー追加権限がない場合は **既存GSCユーザーのOAuth** を推奨する。
 
-- Cloud Runのruntime Service AccountをSearch Console propertyのユーザーとして追加すれば、JSON秘密鍵なしでAPI取得できる。
-- ローカル実行などADCを使わない場合のみ、`GSC_SERVICE_ACCOUNT_JSON` または `[gsc_service_account]` を設定する。
+- `GSC_AUTHORIZED_USER_JSON`: 既存GSCユーザーのOAuth認証情報。Samsung JP propertyをすでに閲覧できるGoogleアカウントで認証する。
+- `GSC_SERVICE_ACCOUNT_JSON`: Search Console propertyへService Accountを追加できる場合のみ使う代替方式。
+- どちらも未設定の場合はApplication Default Credentials (ADC)を使う。
 - `GSC_SITE_URL` は任意。省略時は認証ユーザーが参照できるpropertyを一覧取得し、対象URLに一致するものを自動選択する。
 - URL-prefix propertyが複数一致する場合は最長prefixを優先し、なければ一致する `sc-domain:` propertyを利用する。
 
@@ -58,7 +59,8 @@ Cloud Runでは **Application Default Credentials (ADC)** を推奨する。
 
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`（任意）
-- `GSC_SERVICE_ACCOUNT_JSON` または `[gsc_service_account]`
+- `GSC_AUTHORIZED_USER_JSON` または `[gsc_authorized_user]`（推奨）
+- `GSC_SERVICE_ACCOUNT_JSON` または `[gsc_service_account]`（代替）
 - `GSC_SITE_URL`（任意。自動判定可能）
 - `SCREENSHOT_API_URL`（任意。未設定時は既存Technical SEO Screenshot API）
 
@@ -89,7 +91,7 @@ DockerfileはCloud Run対応済み。
 - `GCP_SA_KEY`
 - `GEMINI_API_KEY`
 
-デプロイ完了後、Actions SummaryにCloud Run URLとGSC用runtime Service Accountが表示される。runtime Service AccountをSamsung JPのSearch Console propertyへユーザー追加すればGSC APIが有効になる。
+デプロイ完了後、GSCは既存GoogleユーザーのOAuthをSecret Managerへ設定する方式を推奨する。Search Console側で新しいユーザーを追加する必要はない。
 
 ### ローカル / Cloud Shellから一括デプロイ
 
@@ -100,7 +102,19 @@ export PROJECT_ID="your-gcp-project-id"
 bash bootstrap_and_deploy.sh
 ```
 
-Gemini API Keyはターミナル上で非表示入力され、Secret Managerへ保存する。最後に表示される `page-traffic-report@<PROJECT_ID>.iam.gserviceaccount.com` をSamsung JPのSearch Console propertyへユーザー追加する。
+GSCは既存のSearch Console閲覧ユーザーでOAuth認証できるため、Samsung JP propertyへService Accountを追加する必要はない。
+
+### GSCを既存Googleユーザーで接続
+
+Google Cloud ConsoleでOAuth Client ID（Desktop app）を1つ作成してJSONをダウンロードし、Samsung JPのSearch Consoleを閲覧できるGoogleアカウントで次を実行する。
+
+```bash
+export PROJECT_ID="your-gcp-project-id"
+export GSC_OAUTH_CLIENT_FILE="$HOME/Downloads/client_secret_xxx.json"
+bash configure_gsc_user_oauth.sh
+```
+
+この処理は `webmasters.readonly` のOAuth refresh credentialをSecret Managerへ保存し、Cloud Runへ `GSC_AUTHORIZED_USER_JSON` として接続する。Search Console側のユーザー追加権限は不要。
 
 個別に実行する場合:
 
@@ -108,14 +122,13 @@ Gemini API Keyはターミナル上で非表示入力され、Secret Managerへ�
 export SERVICE_NAME=page-traffic-report
 export REGION=asia-northeast1
 bash configure_gemini_secret.sh
+bash configure_gsc_user_oauth.sh
 sh deploy_cloud_run.sh
 ```
 
 deploy scriptは専用runtime Service Account
 `page-traffic-report@<PROJECT_ID>.iam.gserviceaccount.com`
-を自動作成してCloud Runへ設定する。
-
-デプロイ後は、script末尾に表示されるService AccountメールアドレスをSearch Console propertyのユーザーとして追加する。これでGSCはADC認証となり、JSON秘密鍵は不要。
+をCloud Run実行用に利用するが、GSCアクセス権はそのService Accountへ付与しなくてもよい。GSCは既存ユーザーOAuthのSecretを利用できる。
 
 `GEMINI_API_KEY` はCloud RunのSecret Manager等で環境変数として設定する。
 
