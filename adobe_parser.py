@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from url_utils import normalize_adobe_url
+from url_utils import is_probable_page_url, normalize_adobe_url
 
 
 CHANNEL_ORDER = [
@@ -140,7 +140,11 @@ def _parse_matrix(section_rows: list[list[str]]) -> dict[str, Any]:
         if not row or len(row) < 20:
             continue
         key = row[0].strip()
-        if not key or key.startswith("Entry URL without Parameter"):
+        if (
+            not key
+            or key.startswith("Entry URL without Parameter")
+            or not is_probable_page_url(key)
+        ):
             continue
         previous = {ch: _int_number(row[2 + i]) for i, ch in enumerate(channels)}
         current = {ch: _int_number(row[11 + i]) for i, ch in enumerate(channels)}
