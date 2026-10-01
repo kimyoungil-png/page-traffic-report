@@ -243,21 +243,6 @@ def _replace_header(slide, page: dict[str, Any]) -> None:
         for extra in tf.paragraphs[2:]:
             _set_paragraph_text_preserve_style(extra, "", 11.0, BLACK)
 
-    gsc_period_shape = _find_text_shape(
-        slide,
-        lambda text, _s: text.strip() == "Last Week",
-    )
-    if gsc_period_shape is not None:
-        gsc_period = str(page.get("gsc_period_label") or "").strip()
-        if gsc_period:
-            _set_simple_text(
-                gsc_period_shape,
-                f"GSC: {gsc_period}",
-                7.0,
-                BLACK,
-                True,
-            )
-
     meta_shape = _find_text_shape(slide, lambda text, _s: text.startswith("Title :"))
     if meta_shape is not None:
         meta_title = page.get("meta_title") or "—"
@@ -300,10 +285,29 @@ def _replace_traffic_table(slide, rows: list[dict[str, Any]]) -> None:
             _set_cell_text(table.cell(r, c), value, size=size, color=color, bold=is_total)
 
 
-def _replace_gsc_table(slide, queries: list[dict[str, Any]]) -> None:
+def _replace_gsc_table(
+    slide,
+    queries: list[dict[str, Any]],
+    gsc_period_label: str = "",
+) -> None:
     table = _find_gsc_table(slide)
     if table is None:
         return
+
+    # The template stores "Last Week" inside the GSC table header cell,
+    # not as a standalone text shape. Preserve the existing header style
+    # and only replace the second paragraph text.
+    header_tf = table.cell(0, 1).text_frame
+    if gsc_period_label and len(header_tf.paragraphs) >= 2:
+        p = header_tf.paragraphs[1]
+        if p.runs:
+            p.runs[0].text = f"GSC: {gsc_period_label}"
+            for extra_run in p.runs[1:]:
+                extra_run.text = ""
+        else:
+            run = p.add_run()
+            run.text = f"GSC: {gsc_period_label}"
+            _set_font(run, 6.0, BLACK, True)
 
     for i in range(10):
         row = i + 2
@@ -371,7 +375,11 @@ def _replace_screenshot(slide, screenshot_bytes: bytes | None) -> None:
 def _fill_slide(slide, page: dict[str, Any]) -> None:
     _replace_header(slide, page)
     _replace_traffic_table(slide, page.get("table_rows") or [])
-    _replace_gsc_table(slide, page.get("gsc_queries") or [])
+    _replace_gsc_table(
+        slide,
+        page.get("gsc_queries") or [],
+        page.get("gsc_period_label") or "",
+    )
     _replace_screenshot(slide, page.get("screenshot_bytes"))
     _force_no_autofit(slide)
 
