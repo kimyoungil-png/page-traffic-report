@@ -6,6 +6,7 @@ REGION="${REGION:-asia-northeast1}"
 TIMEOUT="${TIMEOUT:-900}"
 MEMORY="${MEMORY:-1Gi}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-page-traffic-report}"
+GEMINI_SECRET_NAME="${GEMINI_SECRET_NAME:-page-traffic-report-gemini-api-key}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
 
 if ! command -v gcloud >/dev/null 2>&1; then
@@ -33,15 +34,38 @@ if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT_EMAIL" \
     --display-name "Page Traffic Report"
 fi
 
-gcloud run deploy "$SERVICE_NAME" \
-  --project "$PROJECT_ID" \
-  --source . \
-  --region "$REGION" \
-  --allow-unauthenticated \
-  --service-account "$SERVICE_ACCOUNT_EMAIL" \
-  --timeout "$TIMEOUT" \
-  --memory "$MEMORY" \
-  --set-env-vars "TZ=Asia/Tokyo"
+if gcloud secrets describe "$GEMINI_SECRET_NAME" \
+  --project "$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud secrets add-iam-policy-binding "$GEMINI_SECRET_NAME" \
+    --project "$PROJECT_ID" \
+    --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+    --role "roles/secretmanager.secretAccessor" >/dev/null
+
+  gcloud run deploy "$SERVICE_NAME" \
+    --project "$PROJECT_ID" \
+    --source . \
+    --region "$REGION" \
+    --allow-unauthenticated \
+    --service-account "$SERVICE_ACCOUNT_EMAIL" \
+    --timeout "$TIMEOUT" \
+    --memory "$MEMORY" \
+    --set-env-vars "TZ=Asia/Tokyo" \
+    --set-secrets "GEMINI_API_KEY=$GEMINI_SECRET_NAME:latest"
+else
+  gcloud run deploy "$SERVICE_NAME" \
+    --project "$PROJECT_ID" \
+    --source . \
+    --region "$REGION" \
+    --allow-unauthenticated \
+    --service-account "$SERVICE_ACCOUNT_EMAIL" \
+    --timeout "$TIMEOUT" \
+    --memory "$MEMORY" \
+    --set-env-vars "TZ=Asia/Tokyo"
+
+  echo ""
+  echo "Gemini secret is not configured yet."
+  echo "Run ./configure_gemini_secret.sh when ready."
+fi
 
 echo ""
 echo "Cloud Run URL:"
