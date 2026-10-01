@@ -23,6 +23,7 @@ jobs:
         run: |
           sh -n deploy_cloud_run.sh
           bash -n configure_gemini_secret.sh
+          bash -n bootstrap_and_deploy.sh
       - name: Compile Python
         run: python -m compileall -q .
       - name: Run tests
