@@ -18,7 +18,10 @@ if [[ -z "${ACTIVE_ACCOUNT}" ]]; then
 fi
 
 choose_project() {
-  mapfile -t PROJECTS < <(gcloud projects list --format='value(projectId)' 2>/dev/null)
+  PROJECTS=()
+  while IFS= read -r project; do
+    [[ -n "$project" ]] && PROJECTS[${#PROJECTS[@]}]="$project"
+  done < <(gcloud projects list --format='value(projectId)' 2>/dev/null)
   if [[ "${#PROJECTS[@]}" -eq 0 ]]; then
     echo "No accessible Google Cloud projects were found for the current account." >&2
     exit 2
