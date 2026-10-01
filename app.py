@@ -9,7 +9,7 @@ import streamlit as st
 
 from adobe_parser import parse_adobe_csv
 from gemini_analyzer import DEFAULT_MODEL, generate_traffic_insight
-from gsc_client import build_gsc_service, fetch_top_queries, load_service_account_info, resolve_site_url
+from gsc_client import build_gsc_service, fetch_top_queries, gsc_reporting_period, load_service_account_info, resolve_site_url
 from page_fetcher import fetch_meta_title
 from ppt_report import build_ppt_report
 from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_screenshot
@@ -73,6 +73,10 @@ def period_label(parsed: dict) -> str:
     return f"{start.year}/{start.month}/{start.day}~{end.year}/{end.month}/{end.day}"
 
 
+def gsc_period_label(start: date, end: date) -> str:
+    return f"{start.year}/{start.month}/{start.day}~{end.year}/{end.month}/{end.day}"
+
+
 uploaded = st.file_uploader("Adobe Analytics CSV", type=["csv"])
 
 if uploaded:
@@ -115,6 +119,11 @@ if uploaded:
         use_screenshot = st.checkbox("モバイルスクリーンショット", value=True)
 
     if st.button("Traffic Report生成", type="primary"):
+        request_date = report_anchor_date()
+        gsc_start, gsc_end = gsc_reporting_period(request_date)
+        gsc_start_iso = gsc_start.isoformat()
+        gsc_end_iso = gsc_end.isoformat()
+
         gsc_service = None
         gsc_site_url = ""
         configured_gsc_site_url = str(get_secret("GSC_SITE_URL", "") or "").strip()
@@ -127,7 +136,10 @@ if uploaded:
                     first_url,
                     configured_site_url=configured_gsc_site_url or None,
                 )
-                st.info(f"GSC property: {gsc_site_url}")
+                st.info(
+                    f"GSC property: {gsc_site_url} / "
+                    f"Query period: {gsc_period_label(gsc_start, gsc_end)}"
+                )
             except Exception as exc:
                 gsc_service = None
                 st.warning(f"GSC APIを初期化できないため、Query Top10なしで続行します: {exc}")
@@ -165,8 +177,8 @@ if uploaded:
                             gsc_service,
                             gsc_site_url,
                             url,
-                            parsed["last_week_start"],
-                            parsed["last_week_end"],
+                            gsc_start_iso,
+                            gsc_end_iso,
                             row_limit=10,
                         )
                     except Exception as exc:
@@ -213,6 +225,7 @@ if uploaded:
                     "report_path": report_path(url),
                     "breadcrumb": breadcrumb_label(url),
                     "period_label": period_label(parsed),
+                    "gsc_period_label": gsc_period_label(gsc_start, gsc_end),
                     "total_current": curr_total,
                     "total_previous": prev_total,
                     "total_current_compact": format_compact(curr_total),
@@ -265,7 +278,10 @@ if st.session_state.get("report_pages"):
             with right:
                 table_df = pd.DataFrame(page["table_rows"])
                 st.dataframe(table_df, use_container_width=True, hide_index=True)
-                st.markdown("#### Organic Search Queries Top10")
+                st.markdown(
+                    f"#### Organic Search Queries Top10 "
+                    f"({page.get('gsc_period_label', '')})"
+                )
                 st.dataframe(pd.DataFrame(page["gsc_queries"]), use_container_width=True, hide_index=True)
             if page.get("warnings"):
                 with st.expander("取得時のWarning"):
