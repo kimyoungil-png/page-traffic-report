@@ -87,6 +87,15 @@ deploy scriptは専用runtime Service Account
 
 `GEMINI_API_KEY` はCloud RunのSecret Manager等で環境変数として設定する。
 
+Gemini Secret Manager設定用のhelperも用意済み。
+
+```bash
+chmod +x configure_gemini_secret.sh
+./configure_gemini_secret.sh
+```
+
+API Keyは画面上で非表示入力され、GitHubには保存しない。
+
 ## PowerPoint
 
 `templates/explore_dotcom_sample_v2.pptx` を編集可能テンプレートとして使用する。
