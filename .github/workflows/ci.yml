@@ -19,6 +19,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
+      - name: Check shell scripts
+        run: |
+          sh -n deploy_cloud_run.sh
+          bash -n configure_gemini_secret.sh
       - name: Compile Python
         run: python -m compileall -q .
       - name: Run tests
