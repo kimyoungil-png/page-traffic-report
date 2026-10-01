@@ -8,7 +8,7 @@ Samsung Japan向け、URL単位の Page Traffic Report を自動生成する Str
 2. `Entry Visit` セクションのURL行数をそのままレポートページ数として取得。
 3. Adobe URLに `https://` と末尾 `/` を付与。
 4. ページHTMLの `<title>` を取得。
-5. Google Search Console APIから同一URL・Last WeekのOrganic Search Query Top10を取得。
+5. Google Search Console APIから同一URLのOrganic Search Query Top10を取得。GSCの遅延を考慮し、実行曜日に応じて7日間の取得期間を自動調整する。
 6. 既存Technical SEO CheckerのモバイルScreenshot APIを利用。
 7. Adobeの `Entry Visit` / `Entry →PF・PD・BC` / `Bounce Rate` をURL×Channelで統合。
 8. CTRは `Entry →PF・PD・BC ÷ Entry Visit` で計算。
@@ -36,6 +36,14 @@ canonicalによるURL書き換えは行わない。
 Adobe CSVのヘッダー日付・ファイル名の日付はData表示の基準にはしない。
 
 ## Google Search Console
+
+GSCは2〜3日程度のデータ遅延を考慮し、アプリ実行日を基準に以下の7日間を取得する。
+
+- 月曜実行: 先々週 土曜〜先週 金曜
+- 火曜実行: 先々週 日曜〜先週 土曜
+- 水曜〜日曜実行: 先週 月曜〜先週 日曜
+
+PowerPoint右側のGSC表には `GSC: YYYY/M/D~YYYY/M/D` と実際の取得期間を表示する。Adobe Analyticsの `Data：...` 期間とは月曜・火曜のみ数日ずれる。
 
 Cloud Runでは **Application Default Credentials (ADC)** を推奨する。
 
@@ -72,6 +80,18 @@ python preflight.py
 ## Cloud Run
 
 DockerfileはCloud Run対応済み。
+
+### GitHub Actionsからデプロイ
+
+`.github/workflows/deploy-cloud-run.yml` を用意している。Repository Secretsに次を登録すると、GitHubのActions画面から **Deploy to Cloud Run** を手動実行できる。
+
+- `GCP_PROJECT_ID`
+- `GCP_SA_KEY`
+- `GEMINI_API_KEY`
+
+デプロイ完了後、Actions SummaryにCloud Run URLとGSC用runtime Service Accountが表示される。runtime Service AccountをSamsung JPのSearch Console propertyへユーザー追加すればGSC APIが有効になる。
+
+### ローカル / Cloud Shellからデプロイ
 
 ```bash
 export SERVICE_NAME=page-traffic-report
