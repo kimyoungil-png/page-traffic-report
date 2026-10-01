@@ -25,6 +25,7 @@ jobs:
           bash -n configure_gemini_secret.sh
           bash -n configure_gsc_user_oauth.sh
           bash -n bootstrap_and_deploy.sh
+          bash -n deploy_browser_helper.sh
       - name: Compile Python
         run: python -m compileall -q .
       - name: Run tests
