@@ -19,77 +19,66 @@ if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "(unset)" ]; then
   exit 1
 fi
 
+if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+  echo "ERROR: You do not have access to GCP project: $PROJECT_ID" >&2
+  exit 2
+fi
+
 if [ ! -f "templates/explore_dotcom_sample_v2.pptx" ]; then
   echo "PowerPoint template is missing: templates/explore_dotcom_sample_v2.pptx" >&2
   exit 1
 fi
 
+# Enable what we can. Some corporate accounts cannot enable APIs; in that case
+# deployment may still work if the APIs are already enabled.
+gcloud services enable   run.googleapis.com   cloudbuild.googleapis.com   artifactregistry.googleapis.com   secretmanager.googleapis.com   iam.googleapis.com   searchconsole.googleapis.com   --project "$PROJECT_ID" >/dev/null 2>&1 || true
+
 SERVICE_ACCOUNT_EMAIL="$SERVICE_ACCOUNT_NAME@$PROJECT_ID.iam.gserviceaccount.com"
+USE_DEDICATED_SA=0
 
-gcloud services enable \
-  run.googleapis.com \
-  cloudbuild.googleapis.com \
-  artifactregistry.googleapis.com \
-  secretmanager.googleapis.com \
-  iam.googleapis.com \
-  searchconsole.googleapis.com \
-  --project "$PROJECT_ID" >/dev/null
-
-if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT_EMAIL" \
-  --project "$PROJECT_ID" >/dev/null 2>&1; then
-  echo "Creating runtime service account: $SERVICE_ACCOUNT_EMAIL"
-  gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" \
-    --project "$PROJECT_ID" \
-    --display-name "Page Traffic Report"
+if gcloud iam service-accounts describe "$SERVICE_ACCOUNT_EMAIL"   --project "$PROJECT_ID" >/dev/null 2>&1; then
+  USE_DEDICATED_SA=1
+else
+  echo "Dedicated runtime service account does not exist."
+  echo "Trying to create: $SERVICE_ACCOUNT_EMAIL"
+  if gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME"     --project "$PROJECT_ID"     --display-name "Page Traffic Report" >/dev/null 2>&1; then
+    USE_DEDICATED_SA=1
+    echo "Created dedicated runtime service account."
+  else
+    echo "No permission to create a Service Account."
+    echo "Falling back to the project's default Cloud Run runtime identity."
+  fi
 fi
 
-if gcloud secrets describe "$GEMINI_SECRET_NAME" \
-  --project "$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud secrets add-iam-policy-binding "$GEMINI_SECRET_NAME" \
-    --project "$PROJECT_ID" \
-    --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-    --role "roles/secretmanager.secretAccessor" >/dev/null
+set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --allow-unauthenticated   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo"
 
-  gcloud run deploy "$SERVICE_NAME" \
-    --project "$PROJECT_ID" \
-    --source . \
-    --region "$REGION" \
-    --allow-unauthenticated \
-    --service-account "$SERVICE_ACCOUNT_EMAIL" \
-    --timeout "$TIMEOUT" \
-    --memory "$MEMORY" \
-    --cpu 1 \
-    --concurrency 10 \
-    --max-instances 5 \
-    --set-env-vars "TZ=Asia/Tokyo" \
-    --set-secrets "GEMINI_API_KEY=$GEMINI_SECRET_NAME:latest"
-else
-  gcloud run deploy "$SERVICE_NAME" \
-    --project "$PROJECT_ID" \
-    --source . \
-    --region "$REGION" \
-    --allow-unauthenticated \
-    --service-account "$SERVICE_ACCOUNT_EMAIL" \
-    --timeout "$TIMEOUT" \
-    --memory "$MEMORY" \
-    --cpu 1 \
-    --concurrency 10 \
-    --max-instances 5 \
-    --set-env-vars "TZ=Asia/Tokyo"
+if [ "$USE_DEDICATED_SA" -eq 1 ]; then
+  set -- "$@" --service-account "$SERVICE_ACCOUNT_EMAIL"
+fi
 
-  echo ""
-  echo "Gemini secret is not configured yet."
-  echo "Run ./configure_gemini_secret.sh when ready."
+# Attach Gemini only when a preconfigured secret exists and the runtime identity
+# can read it. Otherwise deploy normally; the app uses its rule-based fallback.
+if gcloud secrets describe "$GEMINI_SECRET_NAME" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  if [ "$USE_DEDICATED_SA" -eq 1 ]; then
+    gcloud secrets add-iam-policy-binding "$GEMINI_SECRET_NAME"       --project "$PROJECT_ID"       --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL"       --role "roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
+  fi
+  set -- "$@" --set-secrets "GEMINI_API_KEY=$GEMINI_SECRET_NAME:latest"
+fi
+
+gcloud run deploy "$@"
+
+URL="$(gcloud run services describe "$SERVICE_NAME"   --project "$PROJECT_ID"   --region "$REGION"   --format 'value(status.url)')"
+
+RUNTIME_SA="$(gcloud run services describe "$SERVICE_NAME"   --project "$PROJECT_ID"   --region "$REGION"   --format 'value(spec.template.spec.serviceAccountName)' 2>/dev/null || true)"
+
+if [ -z "$RUNTIME_SA" ]; then
+  PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+  RUNTIME_SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 fi
 
 echo ""
 echo "Cloud Run URL:"
-gcloud run services describe "$SERVICE_NAME" \
-  --project "$PROJECT_ID" \
-  --region "$REGION" \
-  --format "value(status.url)"
-
+echo "$URL"
 echo ""
-echo "Google Search Console:"
-echo "Add this Cloud Run runtime service account as a user of the Search Console property:"
-echo "$SERVICE_ACCOUNT_EMAIL"
+echo "Runtime Service Account:"
+echo "$RUNTIME_SA"
