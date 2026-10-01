@@ -16,6 +16,7 @@ from gsc_client import (
     load_authorized_user_info,
     load_service_account_info,
     resolve_site_url,
+    validate_gsc_access,
 )
 from page_fetcher import fetch_meta_title
 from ppt_report import build_ppt_report
@@ -146,7 +147,9 @@ if uploaded:
 
         gsc_service = None
         gsc_site_url = ""
-        configured_gsc_site_url = str(get_secret("GSC_SITE_URL", "") or "").strip()
+        configured_gsc_site_url = str(
+            get_secret("GSC_SITE_URL", "https://www.samsung.com/jp/") or ""
+        ).strip()
         if use_gsc:
             try:
                 gsc_service = get_gsc_service()
@@ -156,13 +159,23 @@ if uploaded:
                     first_url,
                     configured_site_url=configured_gsc_site_url or None,
                 )
-                st.info(
-                    f"GSC property: {gsc_site_url} / "
-                    f"Query period: {gsc_period_label(gsc_start, gsc_end)}"
+                probe = validate_gsc_access(
+                    gsc_service,
+                    gsc_site_url,
+                    gsc_start_iso,
+                    gsc_end_iso,
+                )
+                st.success(
+                    f"GSC接続OK: {gsc_site_url} / "
+                    f"Query period: {gsc_period_label(gsc_start, gsc_end)} / "
+                    f"probe rows: {probe.get('row_count', 0)}"
                 )
             except Exception as exc:
-                gsc_service = None
-                st.warning(f"GSC APIを初期化できないため、Query Top10なしで続行します: {exc}")
+                st.error(
+                    "GSC API接続に失敗しました。空欄のPPTは生成せず処理を停止します。"
+                )
+                st.exception(exc)
+                st.stop()
 
         gemini_key = get_secret("GEMINI_API_KEY") if use_gemini else None
         gemini_model = str(get_secret("GEMINI_MODEL", DEFAULT_MODEL))
@@ -202,7 +215,9 @@ if uploaded:
                             row_limit=10,
                         )
                     except Exception as exc:
-                        warnings.append(f"GSC取得失敗: {exc}")
+                        st.error(f"GSC取得失敗: {url}")
+                        st.exception(exc)
+                        st.stop()
 
             screenshot_bytes = None
             if use_screenshot:
