@@ -35,6 +35,36 @@ from url_utils import breadcrumb_label, report_path
 
 
 st.set_page_config(page_title="Page Traffic Report", page_icon="📊", layout="wide")
+
+
+def require_app_password():
+    expected = os.getenv("APP_PASSWORD", "")
+    try:
+        expected = str(st.secrets.get("APP_PASSWORD", expected) or "")
+    except Exception:
+        pass
+
+    # No password configured -> no gate.
+    if not expected:
+        return
+
+    if st.session_state.get("app_authenticated") is True:
+        return
+
+    st.title("Page Traffic Report")
+    st.caption("Access restricted")
+    entered = st.text_input("Password", type="password", placeholder="4-digit password")
+    if st.button("Login", type="primary"):
+        if entered == expected:
+            st.session_state["app_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("パスワードが違います。")
+    st.stop()
+
+
+require_app_password()
+
 st.title("Page Traffic Report")
 st.caption("Adobe Analytics × Google Search Console × Gemini")
 st.write(
