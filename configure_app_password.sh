@@ -6,6 +6,8 @@ REGION="${REGION:-asia-northeast1}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-page-traffic-report}"
 SECRET_NAME="${APP_PASSWORD_SECRET_NAME:-page-traffic-report-app-password}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
+REDEPLOY_SOURCE="${REDEPLOY_SOURCE:-1}"
+ACCESS_MODE="${ACCESS_MODE:-iap}"
 
 if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "(unset)" ]]; then
   echo "Set PROJECT_ID first." >&2
@@ -39,3 +41,8 @@ gcloud run services update "${SERVICE_NAME}"   --project "${PROJECT_ID}"   --reg
 unset APP_PASSWORD
 
 echo "App password configured."
+
+if [[ "${REDEPLOY_SOURCE}" == "1" && -f "./deploy_cloud_run.sh" ]]; then
+  echo "Redeploying latest app source so the password gate code is active..."
+  ACCESS_MODE="${ACCESS_MODE}" PROJECT_ID="${PROJECT_ID}" sh ./deploy_cloud_run.sh
+fi
