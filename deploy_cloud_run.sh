@@ -51,7 +51,7 @@ else
   fi
 fi
 
-set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --allow-unauthenticated   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo"
+set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --allow-unauthenticated   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/"
 
 if [ "$USE_DEDICATED_SA" -eq 1 ]; then
   set -- "$@" --service-account "$SERVICE_ACCOUNT_EMAIL"
