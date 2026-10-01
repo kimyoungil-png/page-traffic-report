@@ -51,10 +51,12 @@ def build_gsc_service(
     if authorized_user_info:
         from google.oauth2.credentials import Credentials
 
-        credentials = Credentials.from_authorized_user_info(
-            authorized_user_info,
-            scopes=SCOPES,
-        )
+        # Preserve the scopes that were actually granted during the OAuth flow.
+        # gcloud ADC may also write quota_project_id; removing it avoids an
+        # unnecessary x-goog-user-project dependency for Search Console.
+        user_info = dict(authorized_user_info)
+        user_info.pop("quota_project_id", None)
+        credentials = Credentials.from_authorized_user_info(user_info)
     elif service_account_info:
         from google.oauth2 import service_account
 
@@ -190,3 +192,25 @@ def fetch_top_queries(
             }
         )
     return output
+
+
+def validate_gsc_access(
+    service,
+    site_url: str,
+    start_date: str,
+    end_date: str,
+) -> dict[str, Any]:
+    """Run a minimal Search Console query and return diagnostic metadata."""
+    body = {
+        "startDate": start_date,
+        "endDate": end_date,
+        "dimensions": ["query"],
+        "rowLimit": 1,
+        "type": "web",
+        "dataState": "final",
+    }
+    result = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+    return {
+        "row_count": len(result.get("rows", []) or []),
+        "response_aggregation_type": result.get("responseAggregationType"),
+    }
