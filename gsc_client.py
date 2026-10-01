@@ -34,17 +34,28 @@ def gsc_reporting_period(as_of_date: date) -> tuple[date, date]:
     return start_date, end_date
 
 
-def build_gsc_service(service_account_info: dict[str, Any] | None = None):
+def build_gsc_service(
+    service_account_info: dict[str, Any] | None = None,
+    authorized_user_info: dict[str, Any] | None = None,
+):
     """Build Search Console API service.
 
-    If explicit Service Account JSON is supplied, use it.
-    Otherwise use Application Default Credentials (ADC). On Cloud Run this
-    means the runtime service account can be granted Search Console access
-    directly, avoiding a downloadable private-key JSON file.
+    Priority:
+    1) Authorized-user OAuth credentials (recommended when the user already
+       has GSC read access but cannot add a Service Account to the property).
+    2) Explicit Service Account JSON.
+    3) Application Default Credentials.
     """
     from googleapiclient.discovery import build
 
-    if service_account_info:
+    if authorized_user_info:
+        from google.oauth2.credentials import Credentials
+
+        credentials = Credentials.from_authorized_user_info(
+            authorized_user_info,
+            scopes=SCOPES,
+        )
+    elif service_account_info:
         from google.oauth2 import service_account
 
         credentials = service_account.Credentials.from_service_account_info(
@@ -57,6 +68,14 @@ def build_gsc_service(service_account_info: dict[str, Any] | None = None):
         credentials, _ = google.auth.default(scopes=SCOPES)
 
     return build("searchconsole", "v1", credentials=credentials, cache_discovery=False)
+
+
+def load_authorized_user_info(*, json_text: str | None = None, mapping: Any = None) -> dict[str, Any]:
+    if json_text:
+        return json.loads(json_text)
+    if mapping:
+        return {str(k): v for k, v in dict(mapping).items()}
+    raise ValueError("GSC Authorized User情報が設定されていません。")
 
 
 def load_service_account_info(*, json_text: str | None = None, mapping: Any = None) -> dict[str, Any]:
@@ -92,7 +111,7 @@ def _domain_matches_sc_property(page_url: str, site_url: str) -> bool:
 
 
 def resolve_site_url(service, page_url: str, configured_site_url: str | None = None) -> str:
-    """Resolve the Search Console property accessible to the service account.
+    """Resolve the Search Console property accessible to the authenticated user.
 
     Priority:
     1) Explicit GSC_SITE_URL if configured and accessible.
@@ -107,7 +126,7 @@ def resolve_site_url(service, page_url: str, configured_site_url: str | None = N
         if configured in available:
             return configured
         raise ValueError(
-            f"GSC_SITE_URL '{configured}' はService Accountから参照できません。"
+            f"GSC_SITE_URL '{configured}' は現在のGSC認証ユーザーから参照できません。"
             f" Accessible properties: {', '.join(sorted(available)) or '(none)'}"
         )
 
