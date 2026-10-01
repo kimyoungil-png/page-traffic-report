@@ -1,10 +1,37 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
+
+
+def gsc_reporting_period(as_of_date: date) -> tuple[date, date]:
+    """Return the 7-day GSC period based on the report request date.
+
+    Monday:
+      Saturday of the week before last through Friday of last week.
+    Tuesday:
+      Sunday of the week before last through Saturday of last week.
+    Wednesday-Sunday:
+      Monday through Sunday of last week.
+
+    This intentionally lags the most recent days to account for GSC data delay.
+    """
+    weekday = as_of_date.weekday()  # Mon=0 ... Sun=6
+
+    if weekday == 0:  # Monday -> end on previous Friday
+        end_date = as_of_date - timedelta(days=3)
+    elif weekday == 1:  # Tuesday -> end on previous Saturday
+        end_date = as_of_date - timedelta(days=3)
+    else:
+        current_week_monday = as_of_date - timedelta(days=weekday)
+        end_date = current_week_monday - timedelta(days=1)
+
+    start_date = end_date - timedelta(days=6)
+    return start_date, end_date
 
 
 def build_gsc_service(service_account_info: dict[str, Any] | None = None):
@@ -127,7 +154,7 @@ def fetch_top_queries(
             }
         ],
         "rowLimit": row_limit,
-        "searchType": "web",
+        "type": "web",
         "dataState": "final",
     }
     result = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
