@@ -26,6 +26,8 @@ jobs:
           bash -n configure_gsc_user_oauth.sh
           bash -n bootstrap_and_deploy.sh
           bash -n deploy_browser_helper.sh
+          bash -n finish_setup.sh
+          bash -n secure_cloud_run_iap.sh
       - name: Compile Python
         run: python -m compileall -q .
       - name: Run tests
