@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -56,7 +57,8 @@ def get_gsc_service():
 
 
 def report_anchor_date() -> date:
-    return date.today()
+    # Cloud Run runs in UTC by default, so use Japan time explicitly.
+    return datetime.now(ZoneInfo("Asia/Tokyo")).date()
 
 
 def period_label(parsed: dict) -> str:
