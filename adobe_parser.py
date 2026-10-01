@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from url_utils import is_probable_page_url, normalize_adobe_url
+from url_utils import normalize_adobe_url
 
 
 CHANNEL_ORDER = [
@@ -20,6 +20,26 @@ CHANNEL_ORDER = [
     "Display AD",
     "Total",
 ]
+
+
+def _is_adobe_dimension_label(value: str) -> bool:
+    """Identify Adobe matrix/header labels that can appear in the URL column."""
+    text = (value or "").strip().casefold()
+    if not text:
+        return True
+    if text.startswith("entry url without parameter"):
+        return True
+    if text in {
+        "entry pages",
+        "entry page",
+        "entry urls",
+        "entry url",
+        "pages",
+        "page",
+        "url",
+    }:
+        return True
+    return False
 
 
 def _normalize_channel(value: str) -> str:
@@ -140,11 +160,7 @@ def _parse_matrix(section_rows: list[list[str]]) -> dict[str, Any]:
         if not row or len(row) < 20:
             continue
         key = row[0].strip()
-        if (
-            not key
-            or key.startswith("Entry URL without Parameter")
-            or not is_probable_page_url(key)
-        ):
+        if _is_adobe_dimension_label(key):
             continue
         previous = {ch: _int_number(row[2 + i]) for i, ch in enumerate(channels)}
         current = {ch: _int_number(row[11 + i]) for i, ch in enumerate(channels)}
