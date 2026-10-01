@@ -91,11 +91,23 @@ DockerfileはCloud Run対応済み。
 
 デプロイ完了後、Actions SummaryにCloud Run URLとGSC用runtime Service Accountが表示される。runtime Service AccountをSamsung JPのSearch Console propertyへユーザー追加すればGSC APIが有効になる。
 
-### ローカル / Cloud Shellからデプロイ
+### ローカル / Cloud Shellから一括デプロイ
+
+Google Cloudへログイン済みなら、Gemini Secret設定 → Cloud Run deploy → health checkまで一括で実行できる。
+
+```bash
+export PROJECT_ID="your-gcp-project-id"
+bash bootstrap_and_deploy.sh
+```
+
+Gemini API Keyはターミナル上で非表示入力され、Secret Managerへ保存する。最後に表示される `page-traffic-report@<PROJECT_ID>.iam.gserviceaccount.com` をSamsung JPのSearch Console propertyへユーザー追加する。
+
+個別に実行する場合:
 
 ```bash
 export SERVICE_NAME=page-traffic-report
 export REGION=asia-northeast1
+bash configure_gemini_secret.sh
 sh deploy_cloud_run.sh
 ```
 
