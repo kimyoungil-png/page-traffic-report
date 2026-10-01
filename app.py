@@ -16,6 +16,7 @@ from gsc_client import (
     load_authorized_user_info,
     load_service_account_info,
     resolve_site_url,
+    resolve_adobe_page_url,
     validate_gsc_access,
 )
 from page_fetcher import fetch_meta_title
@@ -193,6 +194,34 @@ if uploaded:
         for idx, page in enumerate(parsed["pages"], start=1):
             url = page["url"]
             warnings = []
+
+            # Adobe Analytics may truncate long URLs mid-slug. Recover the full
+            # page URL from GSC before requesting Title, Query Top10 or screenshot.
+            if gsc_service:
+                try:
+                    resolved = resolve_adobe_page_url(
+                        gsc_service,
+                        gsc_site_url,
+                        page.get("raw_url") or url,
+                        gsc_end_iso,
+                    )
+                    resolved_url = str(resolved.get("url") or url)
+                    if resolved_url != url:
+                        st.info(
+                            f"[{idx}/{len(parsed['pages'])}] Adobe URL補完: "
+                            f"{url} → {resolved_url}"
+                        )
+                        warnings.append(
+                            f"Adobe URLをGSCから補完: {url} → {resolved_url}"
+                        )
+                        url = resolved_url
+                    elif resolved.get("reason") == "ambiguous":
+                        warnings.append(
+                            "Adobe URL候補が複数見つかったため自動補完せず、"
+                            "CSVのURLをそのまま使用しました。"
+                        )
+                except Exception as exc:
+                    warnings.append(f"Adobe URL補完失敗: {exc}")
 
             meta_title = ""
             with st.spinner(f"[{idx}/{len(parsed['pages'])}] Title取得: {url}"):
