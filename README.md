@@ -79,7 +79,13 @@ export REGION=asia-northeast1
 ./deploy_cloud_run.sh
 ```
 
-Cloud Run側では `GEMINI_API_KEY` をSecret Manager等で設定する。GSCはruntime Service Account + ADCを推奨するため、Search Console側でそのService Accountメールアドレスに閲覧権限を付与すればよい。
+deploy scriptは専用runtime Service Account
+`page-traffic-report@<PROJECT_ID>.iam.gserviceaccount.com`
+を自動作成してCloud Runへ設定する。
+
+デプロイ後は、script末尾に表示されるService AccountメールアドレスをSearch Console propertyのユーザーとして追加する。これでGSCはADC認証となり、JSON秘密鍵は不要。
+
+`GEMINI_API_KEY` はCloud RunのSecret Manager等で環境変数として設定する。
 
 ## PowerPoint
 
