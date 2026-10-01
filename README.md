@@ -37,10 +37,11 @@ Adobe CSVのヘッダー日付・ファイル名の日付はData表示の基準�
 
 ## Google Search Console
 
-Service Account認証を利用する。
+Cloud Runでは **Application Default Credentials (ADC)** を推奨する。
 
-- Search Console propertyにService Accountの `client_email` をユーザー追加する。
-- `GSC_SITE_URL` は任意。省略時はService Accountが参照できるpropertyを一覧取得し、対象URLに一致するものを自動選択する。
+- Cloud Runのruntime Service AccountをSearch Console propertyのユーザーとして追加すれば、JSON秘密鍵なしでAPI取得できる。
+- ローカル実行などADCを使わない場合のみ、`GSC_SERVICE_ACCOUNT_JSON` または `[gsc_service_account]` を設定する。
+- `GSC_SITE_URL` は任意。省略時は認証ユーザーが参照できるpropertyを一覧取得し、対象URLに一致するものを自動選択する。
 - URL-prefix propertyが複数一致する場合は最長prefixを優先し、なければ一致する `sc-domain:` propertyを利用する。
 
 ## Secrets
@@ -78,7 +79,7 @@ export REGION=asia-northeast1
 ./deploy_cloud_run.sh
 ```
 
-Cloud Run側ではGemini/GSCの認証情報を環境変数またはSecret Manager経由で設定する。
+Cloud Run側では `GEMINI_API_KEY` をSecret Manager等で設定する。GSCはruntime Service Account + ADCを推奨するため、Search Console側でそのService Accountメールアドレスに閲覧権限を付与すればよい。
 
 ## PowerPoint
 
