@@ -67,7 +67,8 @@ gcloud secrets add-iam-policy-binding "${SECRET_NAME}" \
 gcloud run services update "${SERVICE_NAME}" \
   --project "${PROJECT_ID}" \
   --region "${REGION}" \
-  --update-secrets "GSC_AUTHORIZED_USER_JSON=${SECRET_NAME}:latest" >/dev/null
+  --update-secrets "GSC_AUTHORIZED_USER_JSON=${SECRET_NAME}:latest" \
+  --update-env-vars "GSC_SITE_URL=https://www.samsung.com/jp/" >/dev/null
 
 echo ""
 echo "GSC OAuth configured."
