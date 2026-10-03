@@ -96,12 +96,22 @@ def render() -> None:
         )
 
     gemini_key = get_secret("GEMINI_API_KEY") if use_gemini else None
+    vertex_project = str(
+        get_secret("GOOGLE_CLOUD_PROJECT", "") or ""
+    ).strip()
+    gemini_available = bool(
+        use_gemini
+        and (
+            gemini_key
+            or vertex_project
+        )
+    )
     gemini_model = str(
         get_secret("GEMINI_MODEL", DEFAULT_MODEL)
     )
-    if use_gemini and not gemini_key:
+    if use_gemini and not gemini_available:
         st.warning(
-            "GEMINI_API_KEYが未設定のため、"
+            "Gemini認証が未設定のため、"
             "3週比較のルールベースコメントで続行します。"
         )
 
@@ -126,7 +136,7 @@ def render() -> None:
             "sources": [],
             "model": "none",
         }
-        if gemini_key and products:
+        if gemini_available and products:
             dates = products[0].get("period_dates", {})
             start_date = (
                 dates.get("older", {}).get("start")
@@ -140,7 +150,11 @@ def render() -> None:
                 "Samsung・競合製品・祝日などの市場イベントを確認中..."
             ):
                 market_context = research_market_context(
-                    api_key=str(gemini_key),
+                    api_key=(
+                        str(gemini_key)
+                        if gemini_key
+                        else None
+                    ),
                     start_date=str(start_date),
                     end_date=str(end_date),
                     model=gemini_model,
@@ -176,14 +190,18 @@ def render() -> None:
                             f"Screenshot取得失敗: {exc}"
                         )
 
-            if gemini_key:
+            if gemini_available:
                 with st.spinner(
                     f"[{index}/{len(products)}] AI分析: "
                     f"{product['product_name']}"
                 ):
                     item["analysis"] = generate_pd_bc_insight(
                         product=item,
-                        api_key=str(gemini_key),
+                        api_key=(
+                            str(gemini_key)
+                            if gemini_key
+                            else None
+                        ),
                         market_context=market_context,
                         model=gemini_model,
                     )
