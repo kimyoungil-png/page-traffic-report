@@ -11,6 +11,13 @@ from google.genai import types
 from gemini_analyzer import DEFAULT_MODEL, FALLBACK_MODEL
 
 
+SEARCH_GROUNDING_MODELS = (
+    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+)
+
+
 def _is_retryable(exc: Exception) -> bool:
     text = str(exc).upper()
     return any(
@@ -190,7 +197,16 @@ def research_market_context(
 
     last_error: Exception | None = None
 
-    for candidate in (model, FALLBACK_MODEL):
+    candidates = []
+    for candidate in (
+        *SEARCH_GROUNDING_MODELS,
+        model,
+        FALLBACK_MODEL,
+    ):
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
         for delay in (0, 2):
             if delay:
                 time.sleep(delay)
