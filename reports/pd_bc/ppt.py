@@ -65,8 +65,8 @@ def _compact(v):
     if abs(v)>=10000: return f'{v/1000:.0f}K'
     if abs(v)>=950: return f'{v/1000:.1f}K'
     return f'{int(round(v)):,}'
-def _pct(v,d=1): return 'â€”' if v is None else f'{float(v):.{d}f}%'
-def _ratio(c,p): return ('NEW' if c else 'â€”') if not p else f'x{float(c)/float(p):.2f}'
+def _pct(v,d=1): return '—' if v is None else f'{float(v):.{d}f}%'
+def _ratio(c,p): return ('NEW' if c else '—') if not p else f'x{float(c)/float(p):.2f}'
 def _ratio_color(s):
     try:return RED if float(str(s).replace('x',''))<1 else RBLUE
     except:return GREY
@@ -76,39 +76,38 @@ def _fill_title(slide,p):
     if not sh:return
     total=p['main']['Total']; prev=total['previous']; curr=total['current']; name=p['product_name']
     pr=_ratio(curr['pd_visit'],prev['pd_visit']); br=_ratio(curr['bc_visit'],prev['bc_visit']); vr=_ratio(curr['piv_total'],prev['piv_total'])
-    # largest PD delta channel
     deltas=[]
     for ch in CHANNEL_ROWS[:-1]:
         row=p['main'].get(ch,{})
         if row: deltas.append((ch,row['current']['pd_visit']-row['previous']['pd_visit']))
     total_delta=curr['pd_visit']-prev['pd_visit']
     if total_delta<0 and deltas:
-        top=min(deltas,key=lambda x:x[1]); insight=f'{top[0]}ã‹ã‚‰ã®PDæµå…¥ãŒæ¸›å°‘'
+        top=min(deltas,key=lambda x:x[1]); insight=f'{top[0]}からのPD流入が減少'
     elif total_delta>0 and deltas:
-        top=max(deltas,key=lambda x:x[1]); insight=f'{top[0]}ã‹ã‚‰ã®PDæµå…¥ãŒå¢—åŠ '
-    else: insight='PDæµå…¥ã¯å‰Íé€±ä¸¦ã¿'
+        top=max(deltas,key=lambda x:x[1]); insight=f'{top[0]}からのPD流入が増加'
+    else: insight='PD流入は前週並み'
     tf=sh.text_frame; tf.clear(); tf.word_wrap=True; tf.auto_size=MSO_AUTO_SIZE.NONE
     p0=tf.paragraphs[0]
-    for txt,color,size in [(f'{name} PD Visit {_compact(curr["pd_visit"])} (',BLACK,18),(pr,_ratio_color(pr),16),(' vs å…ˆé€±) ',BLACK,16),(f'â†’ {insight}',BLUE,14)]:
+    for txt,color,size in [(f'{name} PD Visit {_compact(curr["pd_visit"])} (',BLACK,18),(pr,_ratio_color(pr),16),(' vs 先週) ',BLACK,16),(f'→ {insight}',BLUE,14)]:
         r=p0.add_run(); r.text=txt; _font(r,size,color,True)
     p1=tf.add_paragraph()
-    for txt,color,size in [(f'{name} BC Visit {_compact(curr["bc_visit"])} (',BLACK,18),(br,_ratio_color(br),16),(' vs å…ˆé€±) , PIV ',BLACK,16),(f'{_compact(curr["piv_total"])}ä»¶ (',BLACK,18),(vr,_ratio_color(vr),16),(' vs å…ˆé€±)',BLACK,16)]:
+    for txt,color,size in [(f'{name} BC Visit {_compact(curr["bc_visit"])} (',BLACK,18),(br,_ratio_color(br),16),(' vs 先週) , PIV ',BLACK,16),(f'{_compact(curr["piv_total"])}件 (',BLACK,18),(vr,_ratio_color(vr),16),(' vs 先週)',BLACK,16)]:
         r=p1.add_run(); r.text=txt; _font(r,size,color,True)
 
 def _fill_bullets(slide,p):
-    sh=_find_text(slide,lambda t,s:'æµå…¥å‰²åˆ' in t)
+    sh=_find_text(slide,lambda t,s:'流入割合' in t)
     if not sh:return
     total=p['main']['Total']['current']['bc_visit']; shares=[]
     for ch in CHANNEL_ROWS[:-1]:
         val=p['main'].get(ch,{}).get('current',{}).get('bc_visit',0); shares.append((ch,val,val/total*100 if total else 0))
     shares.sort(key=lambda x:x[1],reverse=True); disp={'Organic Search':'Organic'}
-    line1='æµå…¥å‰²åˆï¼š'+' > '.join(f'{disp.get(ch,ch)} {pct:.0f}%' for ch,_,pct in shares[:3])
+    line1='流入割合：'+' > '.join(f'{disp.get(ch,ch)} {pct:.0f}%' for ch,_,pct in shares[:3])
     prev=p['main']['Total']['previous']['pir']; curr=p['main']['Total']['current']['pir']
-    line2=f'PIRï¼šå…ˆé€± {_pct(prev,1)} â†’ ä»Šé€± {_pct(curr,1)}'
+    line2=f'PIR：先週 {_pct(prev,1)} → 今週 {_pct(curr,1)}'
     parts=[]
     for label in ('Galaxy','iPhone','Sony Xperia'):
-        row=p['device_summary'].get(label,{}); parts.append(f'{label} {_compact(row.get("piv_total",0))}ä»¶ (PIR {_pct(row.get("pir"),1)})')
-    line3='PIVç«¯æœ«åˆ¥ï¼š'+'ã€'.join(parts)
+        row=p['device_summary'].get(label,{}); parts.append(f'{label} {_compact(row.get("piv_total",0))}件 (PIR {_pct(row.get("pir"),1)})')
+    line3='PIV端末別：'+'、'.join(parts)
     tf=sh.text_frame; tf.clear(); tf.word_wrap=True; tf.auto_size=MSO_AUTO_SIZE.NONE
     for i,line in enumerate((line1,line2,line3)):
         par=tf.paragraphs[0] if i==0 else tf.add_paragraph(); r=par.add_run(); r.text=line; _font(r,11,BLACK,False)
@@ -119,7 +118,7 @@ def _fill_summary_table(slide,p):
     name=p['product_name']; _set_cell(t.cell(0,0),name+'\nPD+BC',8,BLACK,True); _set_cell(t.cell(0,8),f'Last Week ({p["short_period_label"]})',8,BLACK,True)
     _set_cell(t.cell(1,7),name+'\nOrder',7,BLACK,True); _set_cell(t.cell(1,16),name+' Order',7,BLACK,True)
     for ri,ch in enumerate(CHANNEL_ROWS,start=2):
-        row=p['main'].get(ch); 
+        row=p['main'].get(ch)
         if not row: continue
         a=row['previous']; b=row['current']; pr=_ratio(b['pd_visit'],a['pd_visit']); br=_ratio(b['bc_visit'],a['bc_visit'])
         vals=[ch,_num(a['pd_visit']),_num(a['pd_to_bc']),_num(a['bc_visit']),_num(a['carrier_piv']),_num(a['estore_piv']),_pct(a['pir'],1),_num(a['order']),_num(b['pd_visit']),pr,_num(b['pd_to_bc']),_num(b['bc_visit']),br,_num(b['carrier_piv']),_num(b['estore_piv']),_pct(b['pir'],1),_num(b['order'])]
@@ -137,11 +136,11 @@ def _fill_carriers(slide,p):
 def _fill_summary_meta(slide,p):
     label=_find_text(slide,lambda t,s:t.strip().endswith('PD+BC Page') and 'Visit' not in t)
     if label:_set_shape(label,f'{p["product_name"]} PD+BC Page',10,PALE,True)
-    footer=_find_text(slide,lambda t,s:'Dataï¼š' in t and 'samsung.com' in t)
-    if footer:_set_shape(footer,f'Dataï¼š{p["period_label"]}\n{p["url"]}ã€{p["url"].rstrip("/")}/buy/',6.4,GREY,False)
+    footer=_find_text(slide,lambda t,s:'Data：' in t and 'samsung.com' in t)
+    if footer:_set_shape(footer,f'Data：{p["period_label"]}\n{p["url"]}、{p["url"].rstrip("/")}/buy/',6.4,GREY,False)
 
 def _replace_screenshot(slide,p):
-    data=p.get('screenshot_bytes');
+    data=p.get('screenshot_bytes')
     if not data:return
     target=next((sh for sh in slide.shapes if sh.shape_type==13 and sh.left<3000000 and sh.top>1800000),None)
     if not target:return
@@ -155,10 +154,10 @@ def _rate(row,key):
 
 def _fill_funnel(slide,p):
     name=p['product_name']; bcname=('Z '+name if (name.startswith('Fold') or name.startswith('Flip')) else name)
-    h=_find_text(slide,lambda t,s:'BC Page çµŒè·¯' in t); 
-    if h:_set_shape(h,f'{bcname} BC Page çµŒè·¯',10,PALE,True)
-    title=_find_text(slide,lambda t,s:'è³¼å…¥çµŒè·¯' in t)
-    if title:_set_shape(title,f'{name} BCã‹ã‚‰Orderã¾ã§ã®è³¼å…¥çµŒè·¯',18,BLACK,True)
+    h=_find_text(slide,lambda t,s:'BC Page 経路' in t)
+    if h:_set_shape(h,f'{bcname} BC Page 経路',10,PALE,True)
+    title=_find_text(slide,lambda t,s:'購入経路' in t)
+    if title:_set_shape(title,f'{name} BCからOrderまでの購入経路',18,BLACK,True)
     b=_find_text(slide,lambda t,s:'CVR' in t)
     if b:
         cur=p['funnel']['current']; prev=p['funnel']['previous']
@@ -167,13 +166,13 @@ def _fill_funnel(slide,p):
             a=prev.get(seg,{}); c=cur.get(seg,{})
             pc=(a.get('order',0)/a.get('bc_visit',1)*100) if a.get('bc_visit') else None
             cc=(c.get('order',0)/c.get('bc_visit',1)*100) if c.get('bc_visit') else None
-            lines.append(f'{label} ã®BC Visitã‹ã‚‰Orderã¾ã§ã®CVRã¯ å…ˆé€± {_pct(pc,2)} â†’ ä»Šé€± {_pct(cc,2)}')
+            lines.append(f'{label} のBC VisitからOrderまでのCVRは 先週 {_pct(pc,2)} → 今週 {_pct(cc,2)}')
         tf=b.text_frame; tf.clear(); tf.word_wrap=True; tf.auto_size=MSO_AUTO_SIZE.NONE
         for i,line in enumerate(lines):
             par=tf.paragraphs[0] if i==0 else tf.add_paragraph(); r=par.add_run(); r.text=line; _font(r,11,BLACK,False)
-    footer=_find_text(slide,lambda t,s:'Dataï¼š' in t)
+    footer=_find_text(slide,lambda t,s:'Data：' in t)
     if footer:
-        ds=p['date_start'].split('-'); de=p['date_end'].split('-'); _set_shape(footer,f'Dataï¼š{int(ds[0])}/{int(ds[1])}/{int(ds[2])} ~ {int(de[1])}/{int(de[2])}',6.4,GREY,False)
+        ds=p['date_start'].split('-'); de=p['date_end'].split('-'); _set_shape(footer,f'Data：{int(ds[0])}/{int(ds[1])}/{int(ds[2])} ~ {int(de[1])}/{int(de[2])}',6.4,GREY,False)
     t=_find_table(slide,19,11)
     if not t:raise RuntimeError('Funnel table not found')
     keys=['bc_visit','cart_add_event','add_on_visit','cart_page_visit','checkout_login','contact_info','delivery','payment',None,'order_confirmation','order']
@@ -186,12 +185,11 @@ def _fill_funnel(slide,p):
                 continue
             _set_cell(t.cell(sr,ci),_num(c.get(key)) if c.get(key) else '',13,RBLUE if seg=='Paid' else GREY,True)
             prev_abs = key in {'bc_visit','cart_add_event','cart_page_visit','order'}
-            _set_cell(t.cell(sr+1,ci),f'(å…ˆé€±ï¼š{_num(a.get(key))})' if prev_abs and a.get(key) else '',6,GREY,True)
+            _set_cell(t.cell(sr+1,ci),f'(先週：{_num(a.get(key))})' if prev_abs and a.get(key) else '',6,GREY,True)
             if key=='bc_visit':
-                _set_cell(t.cell(sr+3,ci),'ç§»å‹•çŽ‡',6.5,RBLUE if seg=='Paid' else GREY,True); _set_cell(t.cell(sr+4,ci),'å…ˆé€±',6.5,RBLUE if seg=='Paid' else GREY,True)
+                _set_cell(t.cell(sr+3,ci),'移動率',6.5,RBLUE if seg=='Paid' else GREY,True); _set_cell(t.cell(sr+4,ci),'先週',6.5,RBLUE if seg=='Paid' else GREY,True)
             else:
                 _set_cell(t.cell(sr+3,ci),_pct(_rate(c,key),1),6.5,RBLUE if seg=='Paid' else GREY,True)
-                # USER CONFIRMED: display CONTACT_INFO previous rate too (same as all other funnel metrics)
                 _set_cell(t.cell(sr+4,ci),_pct(_rate(a,key),1),6.5,RBLUE if seg=='Paid' else GREY,True)
 
 def _no_autofit(slide):
@@ -202,10 +200,10 @@ def _fill_summary(slide,p):
     _fill_title(slide,p); _fill_bullets(slide,p); _fill_summary_table(slide,p); _fill_carriers(slide,p); _fill_summary_meta(slide,p); _replace_screenshot(slide,p); _no_autofit(slide)
 
 def build_pd_bc_report(products:list[dict[str,Any]])->bytes:
-    prs=_load(); s1=prs.slides[0]; s2=prs.slides[1]; outputs=[]
+    prs=_load(); s1=prs.slides[0]; s2=prs.slides[1]
     for p in products:
-        ns=_dup(prs,s1); _fill_summary(ns,p); outputs.append(ns)
+        ns=_dup(prs,s1); _fill_summary(ns,p)
         if p.get('funnel',{}).get('current'):
-            nf=_dup(prs,s2); _fill_funnel(nf,p); _no_autofit(nf); outputs.append(nf)
+            nf=_dup(prs,s2); _fill_funnel(nf,p); _no_autofit(nf)
     _remove_slide(prs,0); _remove_slide(prs,0)
     bio=io.BytesIO(); prs.save(bio); return bio.getvalue()
