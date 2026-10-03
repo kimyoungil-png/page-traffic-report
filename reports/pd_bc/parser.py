@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from url_utils import normalize_adobe_url
@@ -81,38 +81,54 @@ def _int(value: str | int | float | None) -> int:
     return int(round(_num(value)))
 
 
+def _pir(piv_total: float, visits: float) -> float | None:
+    return piv_total / visits * 100 if visits else None
+
+
 def _parse_date_line(text: str) -> tuple[date, date] | None:
-    m = re.search(r"# Date:\s*([^\-]+?)\s+-\s+(.+)$", text.strip().strip('"'))
+    m = re.search(r"# Date:\s*(.+?)\s+-\s+(.+)$", text.strip().strip('"'))
     if not m:
         return None
     start_text, end_text = m.group(1).strip(), m.group(2).strip()
     for fmt in ("%b %d, %Y", "%Y/%m/%d", "%Y-%m-%d"):
         try:
-            return datetime.strptime(start_text, fmt).date(), datetime.strptime(end_text, fmt).date()
+            return (
+                datetime.strptime(start_text, fmt).date(),
+                datetime.strptime(end_text, fmt).date(),
+            )
         except ValueError:
             pass
     return None
 
 
 def _clean_product_name(report_title: str) -> str:
-    name = re.sub(r"\s+PD\+BC\s+Page\s*$", "", report_title.strip(), flags=re.I)
+    name = re.sub(
+        r"\s+PD\+BC\s+Page\s*$",
+        "",
+        report_title.strip(),
+        flags=re.I,
+    )
     name = re.sub(r"\s+PD\s+Page\s*$", "", name, flags=re.I)
     name = re.sub(r"\s+PD\s*$", "", name, flags=re.I)
     return name.strip()
 
 
-def _find_next_section(rows: list[list[str]], start: int, title: str) -> int | None:
+def _find_next_section(
+    rows: list[list[str]],
+    start: int,
+    title: str,
+) -> int | None:
     for i in range(start, len(rows)):
         if rows[i] and rows[i][0].strip() == f"# {title}":
             return i
     return None
 
 
-def _next_product_start(rows: list[list[str]], start: int) -> int:
+def _next_product_start(
+    rows: list[list[str]],
+    start: int,
+) -> int:
     for i in range(start, len(rows) - 3):
-        # A product starts with separator + title + report suite + date.
-        # The same separator also appears immediately after the date, so do
-        # not treat every separator as a new product boundary.
         if (
             rows[i]
             and rows[i][0].startswith("#===")
@@ -127,7 +143,11 @@ def _next_product_start(rows: list[list[str]], start: int) -> int:
     return len(rows)
 
 
-def _extract_table(rows: list[list[str]], start: int, end: int) -> list[list[str]]:
+def _extract_table(
+    rows: list[list[str]],
+    start: int,
+    end: int,
+) -> list[list[str]]:
     out: list[list[str]] = []
     for row in rows[start:end]:
         if not row:
@@ -140,195 +160,698 @@ def _extract_table(rows: list[list[str]], start: int, end: int) -> list[list[str
     return out
 
 
-def _parse_main_matrix(rows: list[list[str]]) -> dict[str, dict[str, Any]]:
+def _unique_period_labels(header_row: list[str]) -> list[str]:
+    labels: list[str] = []
+    for cell in header_row[1:]:
+        label = (cell or "").strip()
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _period_map_from_table(
+    rows: list[list[str]],
+) -> dict[str, str]:
+    """
+    Normalize whatever Adobe calls the 3 displayed periods into:
+    older -> 先々週, previous -> 先週, current -> 今週.
+
+    The export labels can be e.g.
+    3 weeks ago / 2 weeks ago / Last Week
+    or
+    2 weeks ago / Last Week / This Week.
+    We therefore use chronological column order, not the literal wording.
+    """
+    for row in rows:
+        labels = _unique_period_labels(row)
+        if 2 <= len(labels) <= 4 and any(
+            "week" in label.lower()
+            for label in labels
+        ):
+            if len(labels) >= 3:
+                selected = labels[-3:]
+                return {
+                    selected[0]: "older",
+                    selected[1]: "previous",
+                    selected[2]: "current",
+                }
+            return {
+                labels[0]: "previous",
+                labels[1]: "current",
+            }
+    return {
+        "2 weeks ago": "previous",
+        "Last Week": "current",
+    }
+
+
+def _period_dates(
+    start: date,
+    end: date,
+) -> dict[str, dict[str, str]]:
+    return {
+        "older": {
+            "start": (start - timedelta(days=14)).isoformat(),
+            "end": (end - timedelta(days=14)).isoformat(),
+        },
+        "previous": {
+            "start": (start - timedelta(days=7)).isoformat(),
+            "end": (end - timedelta(days=7)).isoformat(),
+        },
+        "current": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
+    }
+
+
+def _period_keys(
+    period_map: dict[str, str],
+) -> list[str]:
+    if "older" in period_map.values():
+        return ["older", "previous", "current"]
+    return ["previous", "current"]
+
+
+def _parse_main_matrix(
+    rows: list[list[str]],
+    period_map: dict[str, str],
+) -> dict[str, dict[str, Any]]:
     data: dict[str, dict[str, Any]] = {}
+    keys = _period_keys(period_map)
+
     for row in rows:
         label = (row[0] if row else "").strip()
         channel = CHANNEL_MAP.get(label)
         if not channel:
             continue
-        cells = row[1:13]
-        while len(cells) < 12:
-            cells.append("0")
-        prev_pd, prev_pd2bc, prev_bc, prev_carrier, prev_estore, prev_order = [_int(x) for x in cells[:6]]
-        curr_pd, curr_pd2bc, curr_bc, curr_carrier, curr_estore, curr_order = [_int(x) for x in cells[6:12]]
-        data[channel] = {
-            "previous": {
-                "pd_visit": prev_pd,
-                "pd_to_bc": prev_pd2bc,
-                "bc_visit": prev_bc,
-                "carrier_piv": prev_carrier,
-                "estore_piv": prev_estore,
-                "piv_total": prev_carrier + prev_estore,
-                "order": prev_order,
-                "pir": _pir(prev_carrier + prev_estore, prev_pd + prev_bc),
-            },
-            "current": {
-                "pd_visit": curr_pd,
-                "pd_to_bc": curr_pd2bc,
-                "bc_visit": curr_bc,
-                "carrier_piv": curr_carrier,
-                "estore_piv": curr_estore,
-                "piv_total": curr_carrier + curr_estore,
-                "order": curr_order,
-                "pir": _pir(curr_carrier + curr_estore, curr_pd + curr_bc),
-            },
-        }
+
+        cells = row[1:]
+        metric_count = 6
+        groups = [
+            cells[i : i + metric_count]
+            for i in range(0, len(cells), metric_count)
+        ]
+        groups = [
+            group
+            for group in groups
+            if len(group) >= metric_count
+        ]
+        if len(groups) < len(keys):
+            continue
+        groups = groups[-len(keys) :]
+
+        record: dict[str, Any] = {}
+        for period, group in zip(keys, groups):
+            (
+                pd_visit,
+                pd_to_bc,
+                bc_visit,
+                carrier_piv,
+                estore_piv,
+                order,
+            ) = [_int(value) for value in group[:6]]
+
+            piv_total = carrier_piv + estore_piv
+            record[period] = {
+                "pd_visit": pd_visit,
+                "pd_to_bc": pd_to_bc,
+                "bc_visit": bc_visit,
+                "carrier_piv": carrier_piv,
+                "estore_piv": estore_piv,
+                "piv_total": piv_total,
+                "order": order,
+                "pir": _pir(
+                    piv_total,
+                    pd_visit + bc_visit,
+                ),
+            }
+        data[channel] = record
+
     return data
 
 
-def _pir(piv_total: float, visits: float) -> float | None:
-    return piv_total / visits * 100 if visits else None
+def _device_display_name(label: str) -> str:
+    if "PC User" in label:
+        return "PC"
+    if "Galaxy S" in label:
+        return "Galaxy S"
+    if "Galaxy Z" in label:
+        return "Galaxy Z"
+    if "Galaxy A" in label:
+        return "Galaxy A"
+    if "Google Pixel" in label:
+        return "Google Pixel"
+    if "Sony Xperia" in label:
+        return "Sony Xperia"
+    if "iPhone" in label:
+        return "iPhone"
+    return re.sub(
+        r"^\[[^\]]+\]\s*\d*\s*",
+        "",
+        label,
+    ).strip()
 
 
-def _parse_devices(rows: list[list[str]]) -> dict[str, dict[str, Any]]:
-    devices = {}
+def _parse_devices(
+    rows: list[list[str]],
+    period_map: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    devices: dict[str, dict[str, Any]] = {}
+    keys = _period_keys(period_map)
+
     for row in rows:
         label = (row[0] if row else "").strip()
-        if not label or label.startswith(",") or label in {"Segments"} or label.startswith("Date"):
+        if not label or not (
+            label.startswith("[")
+            or label.startswith("[Device")
+        ):
             continue
-        if label.startswith("[") or label.startswith("[Device"):
-            cells = row[1:9]
-            while len(cells) < 8:
-                cells.append("0")
-            devices[label] = {
-                "previous": {
-                    "visits": _int(cells[0]),
-                    "carrier_piv": _int(cells[1]),
-                    "estore_piv": _int(cells[2]),
-                    "order": _int(cells[3]),
-                },
-                "current": {
-                    "visits": _int(cells[4]),
-                    "carrier_piv": _int(cells[5]),
-                    "estore_piv": _int(cells[6]),
-                    "order": _int(cells[7]),
-                },
+
+        cells = row[1:]
+        metric_count = 4
+        groups = [
+            cells[i : i + metric_count]
+            for i in range(0, len(cells), metric_count)
+        ]
+        groups = [
+            group
+            for group in groups
+            if len(group) >= metric_count
+        ]
+        if len(groups) < len(keys):
+            continue
+        groups = groups[-len(keys) :]
+
+        display_name = _device_display_name(label)
+        record: dict[str, Any] = {
+            "raw_label": label,
+        }
+
+        for period, group in zip(keys, groups):
+            visits, carrier_piv, estore_piv, order = [
+                _int(value)
+                for value in group[:4]
+            ]
+            piv_total = carrier_piv + estore_piv
+            record[period] = {
+                "visits": visits,
+                "carrier_piv": carrier_piv,
+                "estore_piv": estore_piv,
+                "piv_total": piv_total,
+                "order": order,
+                "pir": _pir(piv_total, visits),
             }
+
+        devices[display_name] = record
+
     return devices
 
 
-def _device_group(devices: dict[str, Any], period: str, includes: list[str]) -> dict[str, Any]:
-    visits = carrier = estore = order = 0
-    for label, data in devices.items():
-        if any(token in label for token in includes):
-            p = data[period]
-            visits += int(p.get("visits", 0) or 0)
-            carrier += int(p.get("carrier_piv", 0) or 0)
-            estore += int(p.get("estore_piv", 0) or 0)
-            order += int(p.get("order", 0) or 0)
-    piv = carrier + estore
-    return {"visits": visits, "carrier_piv": carrier, "estore_piv": estore, "piv_total": piv, "order": order, "pir": _pir(piv, visits)}
+def _sum_devices(
+    devices: dict[str, Any],
+    names: list[str],
+    period: str,
+) -> dict[str, Any]:
+    total = {
+        "visits": 0,
+        "carrier_piv": 0,
+        "estore_piv": 0,
+        "piv_total": 0,
+        "order": 0,
+    }
+    for name in names:
+        row = devices.get(name, {}).get(period, {})
+        for key in (
+            "visits",
+            "carrier_piv",
+            "estore_piv",
+            "piv_total",
+            "order",
+        ):
+            total[key] += int(row.get(key, 0) or 0)
+
+    total["pir"] = _pir(
+        total["piv_total"],
+        total["visits"],
+    )
+    return total
 
 
-def _parse_piv_detail(rows: list[list[str]]) -> dict[str, dict[str, int]]:
-    detail: dict[str, dict[str, int]] = {}
-    keys = ["piv_total", "carrier", "docomo", "au", "softbank", "rakuten", "jcom", "estore"]
+def _summarize_devices(
+    devices: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    groups: dict[str, list[str]] = {
+        "Galaxy": [
+            "Galaxy S",
+            "Galaxy Z",
+            "Galaxy A",
+        ],
+    }
+
+    for name in devices:
+        if name not in {
+            "Galaxy S",
+            "Galaxy Z",
+            "Galaxy A",
+        }:
+            groups[name] = [name]
+
+    summary: dict[str, Any] = {}
+    for label, members in groups.items():
+        summary[label] = {}
+        for period in (
+            "older",
+            "previous",
+            "current",
+        ):
+            summary[label][period] = _sum_devices(
+                devices,
+                members,
+                period,
+            )
+
+    ranking = sorted(
+        [
+            {
+                "name": label,
+                **values["current"],
+            }
+            for label, values in summary.items()
+        ],
+        key=lambda row: (
+            row.get("piv_total", 0),
+            row.get("visits", 0),
+        ),
+        reverse=True,
+    )
+    return summary, ranking
+
+
+def _carrier_key(header: str) -> str | None:
+    text = (header or "").strip()
+    lower = text.lower()
+
+    if "dcm carrier" in lower or "docomo" in lower:
+        return "docomo"
+    if "au carrier" in lower:
+        return "au"
+    if "softbank carrier" in lower:
+        return "softbank"
+    if "rakuten carrier" in lower:
+        return "rakuten"
+    if "jcom carrier" in lower or "j:com" in lower:
+        return "jcom"
+
+    match = re.search(
+        r"PIV\s*\((.+?)\s*carrier\)",
+        text,
+        flags=re.I,
+    )
+    if match:
+        return re.sub(
+            r"\s+",
+            "_",
+            match.group(1).strip().lower(),
+        )
+    return None
+
+
+def _parse_iso_date(
+    value: str,
+) -> date | None:
+    try:
+        return date.fromisoformat(
+            (value or "").strip()
+        )
+    except ValueError:
+        return None
+
+
+def _parse_piv_detail(
+    rows: list[list[str]],
+    period_map: dict[str, str],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "summary": {},
+        "daily": {
+            "older": [],
+            "previous": [],
+            "current": [],
+        },
+        "carrier_order": [],
+    }
+    if not rows:
+        return result
+
+    header = next(
+        (
+            row
+            for row in rows
+            if any(
+                "PIV [Carrier]" in (cell or "")
+                for cell in row
+            )
+        ),
+        None,
+    )
+    if not header:
+        return result
+
+    column_map: dict[str, int] = {}
+    carrier_columns: list[tuple[int, str]] = []
+
+    for index, cell in enumerate(header):
+        name = (cell or "").strip()
+        if name == "Visits":
+            column_map["visits"] = index
+        elif name == "PIV [Carrier]":
+            column_map["carrier_piv"] = index
+        elif name == "PIV [eStore]":
+            column_map["estore_piv"] = index
+        else:
+            carrier = _carrier_key(name)
+            if carrier:
+                carrier_columns.append(
+                    (index, carrier)
+                )
+
+    result["carrier_order"] = [
+        carrier
+        for _, carrier in carrier_columns
+    ]
+
     for row in rows:
-        label = (row[0] if row else "").strip()
-        if label not in {"Date Ranges", "2 weeks ago", "Last Week"}:
+        label = (
+            row[0]
+            if row
+            else ""
+        ).strip()
+        period = period_map.get(label)
+        if not period:
             continue
-        vals = row[1:9]
-        while len(vals) < 8:
-            vals.append("0")
-        detail[label] = {k: _int(v) for k, v in zip(keys, vals)}
-    return detail
+
+        day = _parse_iso_date(
+            row[1]
+            if len(row) > 1
+            else ""
+        )
+
+        record = {
+            "visits": (
+                _int(row[column_map["visits"]])
+                if "visits" in column_map
+                and len(row) > column_map["visits"]
+                else 0
+            ),
+            "carrier_piv": (
+                _int(row[column_map["carrier_piv"]])
+                if "carrier_piv" in column_map
+                and len(row) > column_map["carrier_piv"]
+                else 0
+            ),
+            "estore_piv": (
+                _int(row[column_map["estore_piv"]])
+                if "estore_piv" in column_map
+                and len(row) > column_map["estore_piv"]
+                else 0
+            ),
+            "carriers": {
+                carrier: (
+                    _int(row[index])
+                    if len(row) > index
+                    else 0
+                )
+                for index, carrier
+                in carrier_columns
+            },
+        }
+        record["piv_total"] = (
+            record["carrier_piv"]
+            + record["estore_piv"]
+        )
+
+        if day:
+            record["date"] = day.isoformat()
+            result["daily"].setdefault(
+                period,
+                [],
+            ).append(record)
+        elif (
+            len(row) < 2
+            or not (row[1] or "").strip()
+        ):
+            result["summary"][period] = record
+
+    return result
 
 
-def _parse_funnel(rows: list[list[str]]) -> dict[str, dict[str, dict[str, int]]]:
-    data: dict[str, dict[str, dict[str, int]]] = {"current": {}, "previous": {}}
+def _parse_funnel(
+    rows: list[list[str]],
+    period_map: dict[str, str],
+) -> dict[str, dict[str, dict[str, int]]]:
+    data: dict[str, dict[str, dict[str, int]]] = {
+        "older": {},
+        "previous": {},
+        "current": {},
+    }
+
     for row in rows:
         if len(row) < 3:
             continue
-        period_label = (row[0] or "").strip()
-        segment_label = (row[1] or "").strip()
-        segment = FUNNEL_ROWS.get(segment_label)
-        if not segment:
+
+        period = period_map.get(
+            (row[0] or "").strip()
+        )
+        segment = FUNNEL_ROWS.get(
+            (row[1] or "").strip()
+        )
+        if not period or not segment:
             continue
-        period = "current" if period_label == "Last Week" else "previous" if period_label == "2 weeks ago" else None
-        if not period:
-            continue
-        vals = row[2:12]
-        while len(vals) < len(FUNNEL_KEYS):
-            vals.append("0")
-        data[period][segment] = {k: _int(v) for k, v in zip(FUNNEL_KEYS, vals)}
+
+        values = row[2:12]
+        while len(values) < len(FUNNEL_KEYS):
+            values.append("0")
+
+        data[period][segment] = {
+            key: _int(value)
+            for key, value
+            in zip(FUNNEL_KEYS, values)
+        }
+
     return data
 
 
-def _summarize_devices(devices: dict[str, Any]) -> dict[str, Any]:
-    current_galaxy = _device_group(devices, "current", ["Galaxy S", "Galaxy Z", "Galaxy A"])
-    current_iphone = _device_group(devices, "current", ["iPhone"])
-    current_sony = _device_group(devices, "current", ["Sony Xperia"])
-    return {"Galaxy": current_galaxy, "iPhone": current_iphone, "Sony Xperia": current_sony}
+def _period_label(
+    start: date,
+    end: date,
+) -> str:
+    return (
+        f"{start.year}/{start.month}/{start.day}"
+        f"~{end.year}/{end.month}/{end.day}"
+    )
 
 
-def _period_label(start: date, end: date) -> str:
-    return f"{start.year}/{start.month}/{start.day}~{end.year}/{end.month}/{end.day}"
+def _short_period_label(
+    start: date,
+    end: date,
+) -> str:
+    return (
+        f"{str(start.year)[2:]}/{start.month}/{start.day}"
+        f" ~ "
+        f"{str(end.year)[2:]}/{end.month}/{end.day}"
+    )
 
 
-def _short_period_label(start: date, end: date) -> str:
-    return f"{str(start.year)[2:]}/{start.month}/{start.day} ~ {str(end.year)[2:]}/{end.month}/{end.day}"
-
-
-def parse_pd_bc_csv(content: bytes | str) -> dict[str, Any]:
+def parse_pd_bc_csv(
+    content: bytes | str,
+) -> dict[str, Any]:
     rows = _read_rows(content)
     products: list[dict[str, Any]] = []
     i = 0
+
     while i < len(rows):
         row = rows[i]
-        if not row or not row[0].startswith("#==="):
+        if (
+            not row
+            or not row[0].startswith("#===")
+        ):
             i += 1
             continue
+
         if i + 3 >= len(rows):
             break
-        title = rows[i + 1][0].lstrip("#").strip() if rows[i + 1] else ""
-        parsed_dates = _parse_date_line(rows[i + 3][0] if rows[i + 3] else "")
+
+        title = (
+            rows[i + 1][0]
+            .lstrip("#")
+            .strip()
+            if rows[i + 1]
+            else ""
+        )
+        parsed_dates = _parse_date_line(
+            rows[i + 3][0]
+            if rows[i + 3]
+            else ""
+        )
         if not title or not parsed_dates:
             i += 1
             continue
+
         start_date, end_date = parsed_dates
-        product_end = _next_product_start(rows, i + 4)
+        product_end = _next_product_start(
+            rows,
+            i + 4,
+        )
 
         url = ""
         url_idx = None
-        for j in range(i + 4, product_end):
-            cell = rows[j][0].strip() if rows[j] else ""
-            if cell.startswith("# http") or cell.startswith("# www"):
-                url = cell.lstrip("#").strip()
+        for j in range(
+            i + 4,
+            product_end,
+        ):
+            cell = (
+                rows[j][0].strip()
+                if rows[j]
+                else ""
+            )
+            if (
+                cell.startswith("# http")
+                or cell.startswith("# www")
+            ):
+                url = (
+                    cell.lstrip("#").strip()
+                )
                 url_idx = j
                 break
+
         if not url or url_idx is None:
             i = product_end
             continue
 
-        devices_idx = _find_next_section(rows, url_idx, "主な端末別")
-        piv_idx = _find_next_section(rows, url_idx, "PIV詳細")
-        funnel_idx = _find_next_section(rows, url_idx, "BCからOrderまでの購入経路")
+        devices_idx = _find_next_section(
+            rows,
+            url_idx,
+            "主な端末別",
+        )
+        piv_idx = _find_next_section(
+            rows,
+            url_idx,
+            "PIV詳細",
+        )
+        funnel_idx = _find_next_section(
+            rows,
+            url_idx,
+            "BCからOrderまでの購入経路",
+        )
 
-        main_end = min(x for x in (devices_idx, piv_idx, funnel_idx, product_end) if x is not None)
-        main_table = _extract_table(rows, url_idx + 1, main_end)
+        main_end = min(
+            value
+            for value in (
+                devices_idx,
+                piv_idx,
+                funnel_idx,
+                product_end,
+            )
+            if value is not None
+        )
 
-        devices_table = _extract_table(rows, devices_idx + 1, piv_idx or product_end) if devices_idx is not None and piv_idx is not None else []
-        piv_table = _extract_table(rows, piv_idx + 1, funnel_idx or product_end) if piv_idx is not None else []
-        funnel_table = _extract_table(rows, funnel_idx + 1, product_end) if funnel_idx is not None else []
+        main_table = _extract_table(
+            rows,
+            url_idx + 1,
+            main_end,
+        )
+        period_map = _period_map_from_table(
+            main_table
+        )
+
+        devices_table = (
+            _extract_table(
+                rows,
+                devices_idx + 1,
+                piv_idx or product_end,
+            )
+            if devices_idx is not None
+            and piv_idx is not None
+            else []
+        )
+        piv_table = (
+            _extract_table(
+                rows,
+                piv_idx + 1,
+                funnel_idx or product_end,
+            )
+            if piv_idx is not None
+            else []
+        )
+        funnel_table = (
+            _extract_table(
+                rows,
+                funnel_idx + 1,
+                product_end,
+            )
+            if funnel_idx is not None
+            else []
+        )
+
+        devices = _parse_devices(
+            devices_table,
+            period_map,
+        )
+        (
+            device_summary,
+            device_ranking,
+        ) = _summarize_devices(devices)
 
         product = {
             "report_title": title,
-            "product_name": _clean_product_name(title),
+            "product_name": _clean_product_name(
+                title
+            ),
             "url": normalize_adobe_url(url),
             "raw_url": url,
             "date_start": start_date.isoformat(),
             "date_end": end_date.isoformat(),
-            "period_label": _period_label(start_date, end_date),
-            "short_period_label": _short_period_label(start_date, end_date),
-            "main": _parse_main_matrix(main_table),
-            "devices": _parse_devices(devices_table),
-            "piv_detail": _parse_piv_detail(piv_table),
-            "funnel": _parse_funnel(funnel_table),
+            "period_label": _period_label(
+                start_date,
+                end_date,
+            ),
+            "short_period_label": (
+                _short_period_label(
+                    start_date,
+                    end_date,
+                )
+            ),
+            "period_map": period_map,
+            "period_dates": _period_dates(
+                start_date,
+                end_date,
+            ),
+            "main": _parse_main_matrix(
+                main_table,
+                period_map,
+            ),
+            "devices": devices,
+            "device_summary": device_summary,
+            "device_ranking": device_ranking,
+            "piv_detail": _parse_piv_detail(
+                piv_table,
+                period_map,
+            ),
+            "funnel": _parse_funnel(
+                funnel_table,
+                period_map,
+            ),
         }
-        product["device_summary"] = _summarize_devices(product["devices"])
+
         products.append(product)
         i = product_end
+
     if not products:
-        raise ValueError("PD+BC Page用のデータを取得できませんでした。")
-    return {"products": products}
+        raise ValueError(
+            "PD+BC Page用のデータを取得できませんでした。"
+        )
+
+    return {
+        "products": products,
+    }
