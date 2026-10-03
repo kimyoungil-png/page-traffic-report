@@ -46,7 +46,8 @@ def _preview_rows(products: list[dict]) -> list[dict]:
 def render() -> None:
     st.subheader("PD+BC Page レポート")
     st.caption(
-        "ProductごとにPD+BC集計Slideを生成し、"
+        "3週比較・PIV詳細・日別推移・端末/キャリア構成まで解析し、"
+        "市場イベントも確認してPD+BC集計Slideを生成します。"
         "購入経路データがあるProductのみFunnel Slideも生成します。"
     )
 
@@ -262,10 +263,12 @@ def render() -> None:
                     st.write(analysis["detail_comment"])
                 st.write(
                     {
-                        "PD Visit": current.get("pd_visit", 0),
-                        "PD Visit 2 weeks ago": previous.get("pd_visit", 0),
-                        "BC Visit": current.get("bc_visit", 0),
-                        "BC Visit 2 weeks ago": previous.get("bc_visit", 0),
+                        "PD Visit 今週": current.get("pd_visit", 0),
+                        "PD Visit 先週": previous.get("pd_visit", 0),
+                        "PD Visit 先々週": total.get("older", {}).get("pd_visit", 0),
+                        "BC Visit 今週": current.get("bc_visit", 0),
+                        "BC Visit 先週": previous.get("bc_visit", 0),
+                        "BC Visit 先々週": total.get("older", {}).get("bc_visit", 0),
                         "PIV": current.get("piv_total", 0),
                         "Funnel Slide": bool(
                             product.get("funnel", {}).get("current")
