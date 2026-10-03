@@ -11,6 +11,7 @@ GSC_USER_SECRET_NAME="${GSC_USER_SECRET_NAME:-page-traffic-report-gsc-user-oauth
 APP_PASSWORD_SECRET_NAME="${APP_PASSWORD_SECRET_NAME:-page-traffic-report-app-password}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
 ACCESS_MODE="${ACCESS_MODE:-public}"
+BUILD_SHA="$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
 
 if ! command -v gcloud >/dev/null 2>&1; then
   echo "gcloud CLI is required" >&2
@@ -53,7 +54,7 @@ else
   fi
 fi
 
-set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/"
+set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/,APP_BUILD_SHA=$BUILD_SHA"
 
 if [ "$ACCESS_MODE" = "iap" ]; then
   set -- "$@" --no-allow-unauthenticated --iap
@@ -108,3 +109,6 @@ echo "$URL"
 echo ""
 echo "Runtime Service Account:"
 echo "$RUNTIME_SA"
+echo ""
+echo "Build SHA:"
+echo "$BUILD_SHA"
