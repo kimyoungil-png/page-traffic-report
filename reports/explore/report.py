@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -36,6 +38,7 @@ from url_utils import breadcrumb_label, report_path
 
 STATE_PAGES = "explore:report_pages"
 STATE_PPT = "explore:ppt_bytes"
+STATE_FILENAME = "explore:output_filename"
 
 
 def render() -> None:
@@ -342,6 +345,7 @@ def render() -> None:
 
             st.session_state[STATE_PAGES] = report_pages
             st.session_state[STATE_PPT] = ppt_bytes
+            st.session_state[STATE_FILENAME] = f"{Path(uploaded.name).stem}.pptx"
             st.success(
                 f"Page Traffic Reportを生成しました。 "
                 f"URL補完 {resolved_url_count}件 / "
@@ -356,7 +360,10 @@ def render() -> None:
         st.download_button(
             "PowerPointをダウンロード",
             data=st.session_state[STATE_PPT],
-            file_name="page-traffic-report.pptx",
+            file_name=st.session_state.get(
+                STATE_FILENAME,
+                "page-traffic-report.pptx",
+            ),
             mime=(
                 "application/vnd.openxmlformats-officedocument."
                 "presentationml.presentation"
