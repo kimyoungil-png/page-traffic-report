@@ -179,11 +179,15 @@ def _fill_title(slide,p):
             deltas.append((ch,row['current']['pd_visit']-row['previous']['pd_visit']))
     total_delta=curr['pd_visit']-prev['pd_visit']
     if total_delta<0 and deltas:
-        top=min(deltas,key=lambda x:x[1]); insight=f'{top[0]}からのPD流入が減少'
+        top=min(deltas,key=lambda x:x[1]); fallback_insight=f'{top[0]}からのPD流入が減少'
     elif total_delta>0 and deltas:
-        top=max(deltas,key=lambda x:x[1]); insight=f'{top[0]}からのPD流入が増加'
+        top=max(deltas,key=lambda x:x[1]); fallback_insight=f'{top[0]}からのPD流入が増加'
     else:
-        insight='PD流入は前週並み'
+        fallback_insight='PD流入は前週並み'
+    insight=(
+        p.get('analysis', {}).get('headline_comment')
+        or fallback_insight
+    )
 
     tf=sh.text_frame
     tf.clear()
@@ -227,10 +231,26 @@ def _fill_bullets(slide,p):
     line1='流入割合：'+' > '.join(f'{disp.get(ch,ch)} {pct:.0f}%' for ch,_,pct in shares[:3])
     prev=p['main']['Total']['previous']['pir']; curr=p['main']['Total']['current']['pir']
     line2=f'PIR：先週 {_pct(prev,1)} → 今週 {_pct(curr,1)}'
+    ranking=p.get('device_ranking', [])
+    if not ranking:
+        ranking=[]
+        for label, periods in p.get('device_summary', {}).items():
+            current_row=periods.get('current', {}) if isinstance(periods, dict) else {}
+            ranking.append({'name': label, **current_row})
+        ranking.sort(
+            key=lambda row: (
+                row.get('piv_total', 0),
+                row.get('visits', 0),
+            ),
+            reverse=True,
+        )
     parts=[]
-    for label in ('Galaxy','iPhone','Sony Xperia'):
-        row=p['device_summary'].get(label,{})
-        parts.append(f'{label} {_compact(row.get("piv_total",0))}件 (PIR {_pct(row.get("pir"),1)})')
+    for row in ranking[:3]:
+        label=row.get('name', '')
+        parts.append(
+            f'{label} {_compact(row.get("piv_total",0))}件 '
+            f'(PIR {_pct(row.get("pir"),1)})'
+        )
     line3='PIV端末別：'+'、'.join(parts)
     tf=sh.text_frame
     tf.clear()
@@ -263,13 +283,69 @@ def _fill_summary_table(slide,p):
             _set_cell(t.cell(ri,ci),val,color=color,bold=(ch=='Total' or ci in (9,12)))
 
 
-def _fill_carriers(slide,p):
-    boxes=[sh for sh in slide.shapes if hasattr(sh,'text') and (sh.text or '').strip().startswith('docomo')]
-    boxes.sort(key=lambda s:s.left)
-    for sh,key in zip(boxes,('2 weeks ago','Last Week')):
-        d=p['piv_detail'].get(key,{})
-        _set_shape(sh,f'docomo {_num(d.get("docomo"))}\nau {_num(d.get("au"))}\nSoftBank {_num(d.get("softbank"))}\nRakuten {_num(d.get("rakuten"))}',color=BLACK,bold=True)
+def _carrier_display_name(name):
+    labels={
+        'docomo': 'docomo',
+        'au': 'au',
+        'softbank': 'SoftBank',
+        'rakuten': 'Rakuten',
+        'jcom': 'J:COM',
+    }
+    return labels.get(name, name.replace('_', ' ').title())
 
+
+def _fill_carriers(slide,p):
+    boxes=[
+        sh
+        for sh in slide.shapes
+        if hasattr(sh,'text')
+        and (sh.text or '').strip().startswith('docomo')
+    ]
+    boxes.sort(key=lambda shape: shape.left)
+    if not boxes:
+        return
+
+    detail=p.get('piv_detail', {})
+    summary=detail.get('summary', {})
+    previous=summary.get('previous', {})
+    current=summary.get('current', {})
+
+    order=detail.get('carrier_order', [])
+    if not order:
+        order=['docomo','au','softbank','rakuten','jcom']
+
+    active=[]
+    for carrier in order:
+        previous_value=(
+            previous.get('carriers', {}).get(carrier, 0)
+            if isinstance(previous.get('carriers', {}), dict)
+            else 0
+        )
+        current_value=(
+            current.get('carriers', {}).get(carrier, 0)
+            if isinstance(current.get('carriers', {}), dict)
+            else 0
+        )
+        if previous_value or current_value:
+            active.append(carrier)
+
+    for shape, period_data in zip(
+        boxes,
+        (previous, current),
+    ):
+        lines=[]
+        carriers=period_data.get('carriers', {})
+        for carrier in active:
+            lines.append(
+                f'{_carrier_display_name(carrier)} '
+                f'{_num(carriers.get(carrier, 0))}'
+            )
+        _set_shape(
+            shape,
+            '\n'.join(lines),
+            color=BLACK,
+            bold=True,
+        )
 
 def _fill_summary_meta(slide,p):
     label=_find_text(slide,lambda t,s:t.strip().endswith('PD+BC Page') and 'Visit' not in t)
