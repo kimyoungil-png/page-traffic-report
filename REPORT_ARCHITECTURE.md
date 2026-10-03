@@ -12,14 +12,15 @@ reports/
   explore/
     report.py                # Explore UI + orchestration
   pd_bc/
-    parser.py                # PD+BC CSV parser
-    report.py                # PD+BC UI + orchestration (when enabled)
-    ppt.py                   # PD+BC PowerPoint generator (when enabled)
+    parser.py                # PD+BC CSV parser (3-week / daily / device / carrier)
+    analyzer.py              # PD+BC AI analysis + grounded market context
+    report.py                # PD+BC UI + orchestration
+    ppt.py                   # PD+BC PowerPoint generator
 ```
 
 Existing low-level integrations such as `gsc_client.py`, `screenshot.py`, and `gemini_analyzer.py`
-are shared services. Report-specific parsing, calculations, slide mapping, Streamlit state, and UI must
-stay inside each report package.
+are shared services. Report-specific parsing, calculations, analysis prompts, slide mapping,
+Streamlit state, and UI must stay inside each report package.
 
 ## Rules for a new report
 
