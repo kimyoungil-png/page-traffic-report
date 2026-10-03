@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any
@@ -11,11 +12,59 @@ from google.genai import types
 from gemini_analyzer import DEFAULT_MODEL, FALLBACK_MODEL
 
 
-SEARCH_GROUNDING_MODELS = (
-    "gemini-3.6-flash",
+VERTEX_MODELS = (
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",
 )
+
+
+def _build_client(
+    api_key: str | None = None,
+):
+    project = (
+        os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("PROJECT_ID")
+        or ""
+    ).strip()
+    location = (
+        os.getenv("GOOGLE_CLOUD_LOCATION")
+        or "global"
+    ).strip()
+
+    if project:
+        return (
+            genai.Client(
+                vertexai=True,
+                project=project,
+                location=location,
+            ),
+            "vertex-ai",
+        )
+
+    if api_key:
+        return (
+            genai.Client(api_key=api_key),
+            "developer-api",
+        )
+
+    raise RuntimeError(
+        "Gemini authentication is not configured."
+    )
+
+
+def _candidate_models(
+    requested: str | None,
+) -> list[str]:
+    models: list[str] = []
+    for candidate in (
+        *VERTEX_MODELS,
+        requested or "",
+        FALLBACK_MODEL,
+    ):
+        if candidate and candidate not in models:
+            models.append(candidate)
+    return models
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -168,12 +217,12 @@ def _grounding_sources(response) -> list[dict[str, str]]:
 
 def research_market_context(
     *,
-    api_key: str,
+    api_key: str | None,
     start_date: str,
     end_date: str,
     model: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
-    client = genai.Client(api_key=api_key)
+    client, backend = _build_client(api_key)
 
     prompt = f"""
 日本のスマートフォンECトラフィックの週次分析に使うため、
@@ -197,16 +246,7 @@ def research_market_context(
 
     last_error: Exception | None = None
 
-    candidates = []
-    for candidate in (
-        *SEARCH_GROUNDING_MODELS,
-        model,
-        FALLBACK_MODEL,
-    ):
-        if candidate not in candidates:
-            candidates.append(candidate)
-
-    for candidate in candidates:
+    for candidate in _candidate_models(model):
         for delay in (0, 2):
             if delay:
                 time.sleep(delay)
@@ -236,6 +276,7 @@ def research_market_context(
                     "text": text,
                     "sources": _grounding_sources(response),
                     "model": candidate,
+                    "backend": backend,
                 }
             except Exception as exc:
                 last_error = exc
@@ -246,6 +287,7 @@ def research_market_context(
         "text": "",
         "sources": [],
         "model": "none",
+        "backend": backend,
         "error": str(last_error) if last_error else "",
     }
 
@@ -280,14 +322,14 @@ def _parse_json_text(text: str) -> dict[str, Any]:
 def generate_pd_bc_insight(
     *,
     product: dict[str, Any],
-    api_key: str,
+    api_key: str | None,
     market_context: dict[str, Any] | None = None,
     model: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
     payload = build_analysis_payload(product)
     payload["market_context"] = market_context or {}
 
-    client = genai.Client(api_key=api_key)
+    client, backend = _build_client(api_key)
 
     system_prompt = """
 あなたはSamsung Japan向けPD+BC Page週次レポートのWebアナリストです。
@@ -331,7 +373,7 @@ PowerPoint上部の短い分析コメントを作成してください。
 
     last_error: Exception | None = None
 
-    for candidate in (model, FALLBACK_MODEL):
+    for candidate in _candidate_models(model):
         for delay in (0, 2):
             if delay:
                 time.sleep(delay)
@@ -371,6 +413,7 @@ PowerPoint上部の短い分析コメントを作成してください。
                     "headline_comment": headline,
                     "detail_comment": detail,
                     "model": candidate,
+                    "backend": backend,
                     "market_context": market_context or {},
                 }
             except Exception as exc:
@@ -382,6 +425,7 @@ PowerPoint上部の短い分析コメントを作成してください。
         "headline_comment": _fallback_headline(product),
         "detail_comment": "",
         "model": "fallback",
+        "backend": backend,
         "market_context": market_context or {},
         "error": str(last_error) if last_error else "",
     }
