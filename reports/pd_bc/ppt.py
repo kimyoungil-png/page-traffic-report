@@ -13,7 +13,7 @@ CHANNEL_ROWS=["App","Organic Search","Direct","Referral","Owned Social","Social 
 R_NS="{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 ROOT=Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE_PATH=ROOT/'templates'/'pd_bc_sample.pptx'
-BLACK=RGBColor(0,0,0); BLUE=RGBColor(30,53,227); RBLUE=RGBColor(0,49,244); RED=RGBColor(255,0,0); GREY=RGBColor(128,128,128); PALE=RGBColor(181,181,181)
+BLACK=RGBColor(0,0,0); BLUE=RGBColor(30,53,227); RBLUE=RGBColor(0,49,244); RED=RGBColor(255,0,0); GREY=RGBColor(128,128,128); PALE=RGBColor(181,181,181); WHITE=RGBColor(255,255,255)
 
 
 def _load():
@@ -656,15 +656,40 @@ def _fill_funnel(slide,p):
                 for rr in (sr,sr+1,sr+3,sr+4):
                     _set_cell(t.cell(rr,ci),'',color=GREY,bold=False)
                 continue
-            _set_cell(t.cell(sr,ci),_num(c.get(key)) if c.get(key) else '',color=RBLUE if seg=='Paid' else GREY,bold=True)
+            value_color = WHITE if ci in (9,10) else (RBLUE if seg=='Paid' else GREY)
+            _set_cell(
+                t.cell(sr,ci),
+                _num(c.get(key)) if c.get(key) else '',
+                color=value_color,
+                bold=True,
+            )
             prev_abs = key in {'bc_visit','cart_add_event','cart_page_visit','order'}
-            _set_cell(t.cell(sr+1,ci),f'(先週：{_num(a.get(key))})' if prev_abs and a.get(key) else '',color=GREY,bold=True)
+            previous_color = WHITE if ci in (9,10) else GREY
+            _set_cell(
+                t.cell(sr+1,ci),
+                f'(先週：{_num(a.get(key))})'
+                if prev_abs and a.get(key)
+                else '',
+                color=previous_color,
+                bold=True,
+            )
             if key=='bc_visit':
                 _set_cell(t.cell(sr+3,ci),'移動率',color=RBLUE if seg=='Paid' else GREY,bold=True)
                 _set_cell(t.cell(sr+4,ci),'先週',color=RBLUE if seg=='Paid' else GREY,bold=True)
             else:
-                _set_cell(t.cell(sr+3,ci),_pct(_rate(c,key),1),color=RBLUE if seg=='Paid' else GREY,bold=True)
-                _set_cell(t.cell(sr+4,ci),_pct(_rate(a,key),1),color=RBLUE if seg=='Paid' else GREY,bold=True)
+                rate_color = WHITE if ci in (9,10) else (RBLUE if seg=='Paid' else GREY)
+                _set_cell(
+                    t.cell(sr+3,ci),
+                    _pct(_rate(c,key),1),
+                    color=rate_color,
+                    bold=True,
+                )
+                _set_cell(
+                    t.cell(sr+4,ci),
+                    _pct(_rate(a,key),1),
+                    color=rate_color,
+                    bold=True,
+                )
 
 
 def _no_autofit(slide):
