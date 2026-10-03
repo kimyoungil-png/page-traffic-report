@@ -92,7 +92,7 @@ def render() -> None:
             get_secret("SCREENSHOT_API_URL", DEFAULT_SCREENSHOT_API)
         )
         working_products = []
-        progress = st.progress(0, text="PD+BCレマート生成を開始します...")
+        progress = st.progress(0, text="PD+BCレポート生成を開始します...")
 
         for index, product in enumerate(products, start=1):
             item = dict(product)
