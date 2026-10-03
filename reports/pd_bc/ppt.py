@@ -238,6 +238,7 @@ def _fill_title(slide,p):
     tf.word_wrap=True
     tf.auto_size=MSO_AUTO_SIZE.NONE
 
+    # Line 1: PD Visit
     p0=tf.paragraphs[0]
     p0.space_after=Pt(0)
 
@@ -257,15 +258,11 @@ def _fill_title(slide,p):
     r.font.size=Pt(14)
 
     r=p0.add_run()
-    r.text=' vs 先週) '
+    r.text=' vs 先週)'
     _apply_style(r,None,color=BLACK,bold=True)
     r.font.size=Pt(14)
 
-    r=p0.add_run()
-    r.text=f'→ {insight}'
-    _apply_style(r,None,color=BLUE,bold=True)
-    r.font.size=Pt(14)
-
+    # Line 2: BC Visit / PIV
     p1=tf.add_paragraph()
     p1.space_before=Pt(0)
     p1.space_after=Pt(0)
@@ -308,6 +305,16 @@ def _fill_title(slide,p):
     r=p1.add_run()
     r.text=' vs 先週)'
     _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(14)
+
+    # Line 3: AI comment
+    p2=tf.add_paragraph()
+    p2.space_before=Pt(0)
+    p2.space_after=Pt(0)
+
+    r=p2.add_run()
+    r.text=f'→ {insight}'
+    _apply_style(r,None,color=BLUE,bold=True)
     r.font.size=Pt(14)
 
 
@@ -577,20 +584,61 @@ def _fill_funnel(slide,p):
     b=_find_text(slide,lambda t,s:'CVR' in t)
     if b:
         styles=_text_frame_styles(b.text_frame)
-        cur=p['funnel']['current']; prev=p['funnel']['previous']
+        base_style=styles[0] if styles else None
+        cur=p['funnel']['current']
+        prev=p['funnel']['previous']
         lines=[]
         for seg,label in [('Organic Search','Organic'),('Paid','Paid')]:
-            a=prev.get(seg,{}); c=cur.get(seg,{})
-            pc=(a.get('order',0)/a.get('bc_visit',1)*100) if a.get('bc_visit') else None
-            cc=(c.get('order',0)/c.get('bc_visit',1)*100) if c.get('bc_visit') else None
-            lines.append(f'{label} のBC VisitからOrderまでのCVRは 先週 {_pct(pc,2)} → 今週 {_pct(cc,2)}')
+            a=prev.get(seg,{})
+            c=cur.get(seg,{})
+            pc=(
+                a.get('order',0)
+                / a.get('bc_visit',1)
+                * 100
+            ) if a.get('bc_visit') else None
+            cc=(
+                c.get('order',0)
+                / c.get('bc_visit',1)
+                * 100
+            ) if c.get('bc_visit') else None
+            lines.append(
+                f'{label} のBC VisitからOrderまでのCVRは '
+                f'先週 {_pct(pc,2)} → 今週 {_pct(cc,2)}'
+            )
+
+        # Same treatment as page 1 / Explore:
+        # keep template paragraph properties (bullet, indent, spacing)
+        # and replace only the text.
         tf=b.text_frame
-        tf.clear()
         tf.word_wrap=True
         tf.auto_size=MSO_AUTO_SIZE.NONE
-        for i,line in enumerate(lines):
-            par=tf.paragraphs[0] if i==0 else tf.add_paragraph()
-            _add_run(par, line, styles[i] if i < len(styles) else (styles[0] if styles else None), color=BLACK, bold=False)
+
+        for index,line in enumerate(lines):
+            paragraph=_ensure_styled_paragraph(
+                tf,
+                index,
+            )
+            style=(
+                styles[index]
+                if index<len(styles)
+                else base_style
+            )
+            _set_paragraph_text_preserve_style(
+                paragraph,
+                line,
+                style,
+                color=BLACK,
+                bold=False,
+            )
+
+        for paragraph in tf.paragraphs[len(lines):]:
+            _set_paragraph_text_preserve_style(
+                paragraph,
+                '',
+                base_style,
+                color=BLACK,
+                bold=False,
+            )
     footer=_find_text(slide,lambda t,s:'Data：' in t)
     if footer:
         ds=p['date_start'].split('-'); de=p['date_end'].split('-')
