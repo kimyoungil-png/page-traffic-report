@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -36,7 +37,8 @@ from url_utils import breadcrumb_label, report_path
 
 st.set_page_config(page_title="Page Traffic Report", page_icon="📊", layout="wide")
 
-LOGIN_IMAGE_PATH = "assets/momoko2.png"
+APP_DIR = Path(__file__).resolve().parent
+LOGIN_IMAGE_PATH = APP_DIR / "assets" / "momoko2.png"
 
 
 def require_app_password():
@@ -56,10 +58,12 @@ def require_app_password():
     st.title("Page Traffic Report")
     st.caption("Access restricted")
 
-    if os.path.exists(LOGIN_IMAGE_PATH):
+    if LOGIN_IMAGE_PATH.exists():
         left, center, right = st.columns([1, 1.2, 1])
         with center:
-            st.image(LOGIN_IMAGE_PATH, use_container_width=True)
+            st.image(LOGIN_IMAGE_PATH.read_bytes(), use_container_width=True)
+    else:
+        st.warning("Login image not found in deployed app.")
 
     entered = st.text_input("Password", type="password", placeholder="4-digit password")
     if st.button("Login", type="primary"):
