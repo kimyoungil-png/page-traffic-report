@@ -35,7 +35,7 @@ fi
 
 # Enable what we can. Some corporate accounts cannot enable APIs; in that case
 # deployment may still work if the APIs are already enabled.
-gcloud services enable   run.googleapis.com   cloudbuild.googleapis.com   artifactregistry.googleapis.com   secretmanager.googleapis.com   iam.googleapis.com   searchconsole.googleapis.com   --project "$PROJECT_ID" >/dev/null 2>&1 || true
+gcloud services enable   run.googleapis.com   cloudbuild.googleapis.com   artifactregistry.googleapis.com   secretmanager.googleapis.com   iam.googleapis.com   searchconsole.googleapis.com   aiplatform.googleapis.com   --project "$PROJECT_ID" >/dev/null 2>&1 || true
 
 SERVICE_ACCOUNT_EMAIL="$SERVICE_ACCOUNT_NAME@$PROJECT_ID.iam.gserviceaccount.com"
 USE_DEDICATED_SA=0
@@ -54,7 +54,7 @@ else
   fi
 fi
 
-set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/,APP_BUILD_SHA=$BUILD_SHA"
+set --   "$SERVICE_NAME"   --project "$PROJECT_ID"   --source .   --region "$REGION"   --timeout "$TIMEOUT"   --memory "$MEMORY"   --cpu 1   --concurrency 10   --max-instances 5   --set-env-vars "TZ=Asia/Tokyo,GSC_SITE_URL=https://www.samsung.com/jp/,APP_BUILD_SHA=$BUILD_SHA,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global"
 
 if [ "$ACCESS_MODE" = "iap" ]; then
   set -- "$@" --no-allow-unauthenticated --iap
@@ -64,6 +64,15 @@ fi
 
 if [ "$USE_DEDICATED_SA" -eq 1 ]; then
   set -- "$@" --service-account "$SERVICE_ACCOUNT_EMAIL"
+
+  if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member "serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+    --role "roles/aiplatform.user" >/dev/null 2>&1; then
+    echo "Granted Vertex AI User to runtime service account."
+  else
+    echo "WARNING: Could not grant roles/aiplatform.user to runtime service account." >&2
+    echo "Vertex AI analysis may fail until this IAM role is granted." >&2
+  fi
 fi
 
 # Attach Gemini only when a preconfigured secret exists and the runtime identity
