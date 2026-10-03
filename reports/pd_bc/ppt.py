@@ -7,6 +7,7 @@ from typing import Any
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
+from pptx.util import Pt
 
 CHANNEL_ROWS=["App","Organic Search","Direct","Referral","Owned Social","Social Network","CRM","Paid Search","Display AD","Total"]
 R_NS="{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -131,6 +132,32 @@ def _set_cell(cell,text,size=7.5,color=None,bold=None):
     _apply_style(r, style, color=color, bold=bold)
 
 
+def _clear_paragraph_preserve_style(paragraph):
+    p_element=paragraph._p
+    for child in list(p_element):
+        if child.tag.endswith('}pPr'):
+            continue
+        p_element.remove(child)
+
+
+def _ensure_styled_paragraph(text_frame,index):
+    while len(text_frame.paragraphs)<=index:
+        new_p=text_frame.add_paragraph()
+        base_p_pr=text_frame.paragraphs[0]._p.pPr
+        if base_p_pr is not None:
+            if new_p._p.pPr is not None:
+                new_p._p.remove(new_p._p.pPr)
+            new_p._p.insert(0,deepcopy(base_p_pr))
+    return text_frame.paragraphs[index]
+
+
+def _set_paragraph_text_preserve_style(paragraph,text,style,color=BLACK,bold=False):
+    _clear_paragraph_preserve_style(paragraph)
+    r=paragraph.add_run()
+    r.text=str(text or '')
+    _apply_style(r,style,color=color,bold=bold)
+
+
 def _num(v):
     return f'{int(round(float(v or 0))):,}'
 
@@ -169,23 +196,40 @@ def _fill_title(slide,p):
     sh=_find_text(slide,lambda t,s:'PD Visit' in t and 'BC Visit' in t)
     if not sh:
         return
-    styles=_text_frame_styles(sh.text_frame)
-    total=p['main']['Total']; prev=total['previous']; curr=total['current']; name=p['product_name']
-    pr=_ratio(curr['pd_visit'],prev['pd_visit']); br=_ratio(curr['bc_visit'],prev['bc_visit']); vr=_ratio(curr['piv_total'],prev['piv_total'])
+
+    total=p['main']['Total']
+    prev=total['previous']
+    curr=total['current']
+    name=p['product_name']
+
+    pr=_ratio(curr['pd_visit'],prev['pd_visit'])
+    br=_ratio(curr['bc_visit'],prev['bc_visit'])
+    vr=_ratio(curr['piv_total'],prev['piv_total'])
+
     deltas=[]
     for ch in CHANNEL_ROWS[:-1]:
         row=p['main'].get(ch,{})
         if row:
-            deltas.append((ch,row['current']['pd_visit']-row['previous']['pd_visit']))
+            deltas.append(
+                (
+                    ch,
+                    row['current']['pd_visit']
+                    - row['previous']['pd_visit'],
+                )
+            )
+
     total_delta=curr['pd_visit']-prev['pd_visit']
     if total_delta<0 and deltas:
-        top=min(deltas,key=lambda x:x[1]); fallback_insight=f'{top[0]}からのPD流入が減少'
+        top=min(deltas,key=lambda x:x[1])
+        fallback_insight=f'{top[0]}からのPD流入が減少'
     elif total_delta>0 and deltas:
-        top=max(deltas,key=lambda x:x[1]); fallback_insight=f'{top[0]}からのPD流入が増加'
+        top=max(deltas,key=lambda x:x[1])
+        fallback_insight=f'{top[0]}からのPD流入が増加'
     else:
         fallback_insight='PD流入は前週並み'
+
     insight=(
-        p.get('analysis', {}).get('headline_comment')
+        p.get('analysis',{}).get('headline_comment')
         or fallback_insight
     )
 
@@ -193,72 +237,193 @@ def _fill_title(slide,p):
     tf.clear()
     tf.word_wrap=True
     tf.auto_size=MSO_AUTO_SIZE.NONE
+
     p0=tf.paragraphs[0]
-    runs0=[
-        (f'{name} PD Visit {_compact(curr["pd_visit"])} (',BLACK),
-        (pr,_ratio_color(pr)),
-        (' vs 先週) ',BLACK),
-        (f'→ {insight}',BLUE),
-    ]
-    for idx,(txt,color) in enumerate(runs0):
-        _add_run(p0, txt, styles[idx] if idx < len(styles) else None, color=color, bold=True)
+    p0.space_after=Pt(0)
+
+    r=p0.add_run()
+    r.text=f'{name} PD Visit {_compact(curr["pd_visit"])} '
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(18)
+
+    r=p0.add_run()
+    r.text='('
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(14)
+
+    r=p0.add_run()
+    r.text=pr
+    _apply_style(r,None,color=_ratio_color(pr),bold=True)
+    r.font.size=Pt(14)
+
+    r=p0.add_run()
+    r.text=' vs 先週) '
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(14)
+
+    r=p0.add_run()
+    r.text=f'→ {insight}'
+    _apply_style(r,None,color=BLUE,bold=True)
+    r.font.size=Pt(14)
 
     p1=tf.add_paragraph()
-    offset=len(runs0)
-    runs1=[
-        (f'{name} BC Visit {_compact(curr["bc_visit"])} (',BLACK),
-        (br,_ratio_color(br)),
-        (' vs 先週) , PIV ',BLACK),
-        (f'{_compact(curr["piv_total"])}件 (',BLACK),
-        (vr,_ratio_color(vr)),
-        (' vs 先週)',BLACK),
-    ]
-    for idx,(txt,color) in enumerate(runs1):
-        style=styles[offset+idx] if offset+idx < len(styles) else (styles[-1] if styles else None)
-        _add_run(p1, txt, style, color=color, bold=True)
+    p1.space_before=Pt(0)
+    p1.space_after=Pt(0)
+
+    r=p1.add_run()
+    r.text=f'{name} BC Visit {_compact(curr["bc_visit"])} '
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(18)
+
+    r=p1.add_run()
+    r.text='('
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(14)
+
+    r=p1.add_run()
+    r.text=br
+    _apply_style(r,None,color=_ratio_color(br),bold=True)
+    r.font.size=Pt(14)
+
+    r=p1.add_run()
+    r.text=' vs 先週) , PIV '
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(18)
+
+    r=p1.add_run()
+    r.text=f'{_compact(curr["piv_total"])}件 '
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(18)
+
+    r=p1.add_run()
+    r.text='('
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(14)
+
+    r=p1.add_run()
+    r.text=vr
+    _apply_style(r,None,color=_ratio_color(vr),bold=True)
+    r.font.size=Pt(14)
+
+    r=p1.add_run()
+    r.text=' vs 先週)'
+    _apply_style(r,None,color=BLACK,bold=True)
+    r.font.size=Pt(14)
 
 
 def _fill_bullets(slide,p):
     sh=_find_text(slide,lambda t,s:'流入割合' in t)
     if not sh:
         return
+
     styles=_text_frame_styles(sh.text_frame)
-    total=p['main']['Total']['current']['bc_visit']; shares=[]
+    base_style=styles[0] if styles else None
+
+    total=p['main']['Total']['current']['bc_visit']
+    shares=[]
     for ch in CHANNEL_ROWS[:-1]:
-        val=p['main'].get(ch,{}).get('current',{}).get('bc_visit',0)
-        shares.append((ch,val,val/total*100 if total else 0))
-    shares.sort(key=lambda x:x[1],reverse=True); disp={'Organic Search':'Organic'}
-    line1='流入割合：'+' > '.join(f'{disp.get(ch,ch)} {pct:.0f}%' for ch,_,pct in shares[:3])
-    prev=p['main']['Total']['previous']['pir']; curr=p['main']['Total']['current']['pir']
-    line2=f'PIR：先週 {_pct(prev,1)} → 今週 {_pct(curr,1)}'
-    ranking=p.get('device_ranking', [])
+        val=(
+            p['main']
+            .get(ch,{})
+            .get('current',{})
+            .get('bc_visit',0)
+        )
+        shares.append(
+            (
+                ch,
+                val,
+                val/total*100 if total else 0,
+            )
+        )
+
+    shares.sort(
+        key=lambda x:x[1],
+        reverse=True,
+    )
+    disp={'Organic Search':'Organic'}
+    line1='流入割合：'+' > '.join(
+        f'{disp.get(ch,ch)} {pct:.0f}%'
+        for ch,_,pct in shares[:3]
+    )
+
+    prev=p['main']['Total']['previous']['pir']
+    curr=p['main']['Total']['current']['pir']
+    line2=(
+        f'PIR：先週 {_pct(prev,1)} '
+        f'→ 今週 {_pct(curr,1)}'
+    )
+
+    ranking=p.get('device_ranking',[])
     if not ranking:
         ranking=[]
-        for label, periods in p.get('device_summary', {}).items():
-            current_row=periods.get('current', {}) if isinstance(periods, dict) else {}
-            ranking.append({'name': label, **current_row})
+        for label,periods in p.get(
+            'device_summary',
+            {},
+        ).items():
+            current_row=(
+                periods.get('current',{})
+                if isinstance(periods,dict)
+                else {}
+            )
+            ranking.append(
+                {
+                    'name':label,
+                    **current_row,
+                }
+            )
         ranking.sort(
-            key=lambda row: (
-                row.get('piv_total', 0),
-                row.get('visits', 0),
+            key=lambda row:(
+                row.get('piv_total',0),
+                row.get('visits',0),
             ),
             reverse=True,
         )
+
     parts=[]
     for row in ranking[:3]:
-        label=row.get('name', '')
+        label=row.get('name','')
         parts.append(
-            f'{label} {_compact(row.get("piv_total",0))}件 '
+            f'{label} '
+            f'{_compact(row.get("piv_total",0))}件 '
             f'(PIR {_pct(row.get("pir"),1)})'
         )
     line3='PIV端末別：'+'、'.join(parts)
+
+    # Same treatment as Explore report:
+    # do not clear the text frame; preserve each paragraph's pPr
+    # so the template's real bullet/indent/spacing remains intact.
     tf=sh.text_frame
-    tf.clear()
     tf.word_wrap=True
     tf.auto_size=MSO_AUTO_SIZE.NONE
-    for i,line in enumerate((line1,line2,line3)):
-        par=tf.paragraphs[0] if i==0 else tf.add_paragraph()
-        _add_run(par, line, styles[i] if i < len(styles) else (styles[0] if styles else None), color=BLACK, bold=False)
+
+    for index,line in enumerate(
+        (line1,line2,line3)
+    ):
+        paragraph=_ensure_styled_paragraph(
+            tf,
+            index,
+        )
+        style=(
+            styles[index]
+            if index<len(styles)
+            else base_style
+        )
+        _set_paragraph_text_preserve_style(
+            paragraph,
+            line,
+            style,
+            color=BLACK,
+            bold=False,
+        )
+
+    for paragraph in tf.paragraphs[3:]:
+        _set_paragraph_text_preserve_style(
+            paragraph,
+            '',
+            base_style,
+            color=BLACK,
+            bold=False,
+        )
 
 
 def _fill_summary_table(slide,p):
@@ -267,8 +432,31 @@ def _fill_summary_table(slide,p):
         raise RuntimeError('Summary table not found')
     name=p['product_name']
     _set_cell(t.cell(0,0),name+'\nPD+BC',color=BLACK,bold=True)
-    _set_cell(t.cell(0,8),f'Last Week ({p["short_period_label"]})',color=BLACK,bold=True)
-    _set_cell(t.cell(1,7),name+'\nOrder',color=BLACK,bold=True)
+
+    previous_group_title=t.cell(0,1).text or '2 Weeks ago'
+    _set_cell(
+        t.cell(0,1),
+        previous_group_title,
+        color=GREY,
+        bold=True,
+    )
+    for ci in range(1,8):
+        existing=t.cell(1,ci).text
+        if ci==7:
+            existing=name+'\nOrder'
+        _set_cell(
+            t.cell(1,ci),
+            existing,
+            color=GREY,
+            bold=True,
+        )
+
+    _set_cell(
+        t.cell(0,8),
+        f'Last Week ({p["short_period_label"]})',
+        color=BLACK,
+        bold=True,
+    )
     _set_cell(t.cell(1,16),name+' Order',color=BLACK,bold=True)
     for ri,ch in enumerate(CHANNEL_ROWS,start=2):
         row=p['main'].get(ch)
@@ -379,7 +567,7 @@ def _rate(row,key):
 
 
 def _fill_funnel(slide,p):
-    name=p['product_name']; bcname=('Z '+name if (name.startswith('Fold') or name.startswith('Flip')) else name)
+    name=p['product_name']; bcname=name
     h=_find_text(slide,lambda t,s:'BC Page 経路' in t)
     if h:
         _set_shape(h,f'{bcname} BC Page 経路',color=PALE,bold=True)
