@@ -9,124 +9,140 @@ from typing import Any
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Pt
 
-from reports.pd_bc.parser import CHANNEL_ORDER
-
-
+R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE_PATH = ROOT / "templates" / "pd_bc_sample.pptx"
 FONT_FACE = "Meiryo UI"
 
-R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
-
-BLACK = RGBColor(0, 0, 0)
 BLUE = RGBColor(30, 53, 227)
 RATIO_BLUE = RGBColor(0, 49, 244)
 RED = RGBColor(255, 0, 0)
+BLACK = RGBColor(0, 0, 0)
 GREY = RGBColor(128, 128, 128)
 PALE = RGBColor(181, 181, 181)
+WHITE = RGBColor(255, 255, 255)
 
+CHANNEL_ROWS = [
+    "App",
+    "Organic Search",
+    "Direct",
+    "Referral",
+    "Owned Social",
+    "Social Network",
+    "CRM",
+    "Paid Search",
+    "Display AD",
+    "Total",
+]
 
-def template_path() -> Path:
-    return Path(
-        os.getenv(
-            "PD_BC_PPT_TEMPLATE_PATH",
-            str(DEFAULT_TEMPLATE_PATH),
-        )
-    )
+FUNNEL_SEGMENTS = ["Organic Search", "Other", "Paid"]
+FUNNEL_KEYS = [
+    "bc_visit",
+    "cart_add_event",
+    "add_on_visit",
+    "cart_page_visit",
+    "checkout_login",
+    "contact_info",
+    "delivery",
+    "payment",
+    "payment_service",
+    "order_confirmation",
+    "order",
+]
 
 
 def _load_template() -> Presentation:
-    path = template_path()
+    path = Path(os.getenv("PD_BC_PPT_TEMPLATE_PATH", str(DEFAULT_TEMPLATE_PATH)))
     if not path.exists():
-        raise RuntimeError(
-            "PD+BC PowerPointãƒ†ãƒ³ãƒ—ãƒ¬ãƒ¼ãƒˆãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“: "
-            f"{path}"
-        )
-    prs = Presentation(str(path))
-    if len(prs.slides) < 2:
-        raise RuntimeError(
-            "PD+BCãƒ†ãƒ³ãƒ—ãƒ¬ãƒ¼ãƒˆã«ã¯Summary/Funnelã®2æžšãŒå¿…è¦ã§ã™ã€‚"
-        )
-    return prs
+        raise RuntimeError(f"PD+BCãƒ†ãƒ³ãƒ—ãƒ¬ãƒ¼ãƒˆãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“: {path}")
+    return Presentation(str(path))
 
 
-def _remap_relationship_ids(
-    source_slide,
-    new_slide,
-    cloned_element,
-) -> None:
+def _remap_relationship_ids(source_slide, new_slide, cloned_element) -> None:
     rid_map: dict[str, str] = {}
     for element in cloned_element.iter():
-        for attr_name in (
-            R_NS + "embed",
-            R_NS + "link",
-            R_NS + "id",
-        ):
+        for attr_name in (R_NS + "embed", R_NS + "link", R_NS + "id"):
             old_rid = element.get(attr_name)
             if not old_rid or old_rid not in source_slide.part.rels:
                 continue
             if old_rid not in rid_map:
                 rel = source_slide.part.rels[old_rid]
-                rid_map[old_rid] = new_slide.part.relate_to(
-                    rel._target,
-                    rel.reltype,
-                )
+                rid_map[old_rid] = new_slide.part.relate_to(rel._target, rel.reltype)
             element.set(attr_name, rid_map[old_rid])
 
 
-def _duplicate_slide(prs: Presentation, source_slide):
-    new_slide = prs.slides.add_slide(source_slide.slide_layout)
+def _duplicate_template_slide(presentation: Presentation, source_slide):
+    new_slide = presentation.slides.add_slide(source_slide.slide_layout)
     for shape in list(new_slide.shapes):
         element = shape.element
         element.getparent().remove(element)
-
     for shape in source_slide.shapes:
         cloned = deepcopy(shape.element)
-        _remap_relationship_ids(
-            source_slide,
-            new_slide,
-            cloned,
-        )
-        new_slide.shapes._spTree.insert_element_before(
-            cloned,
-            "p:extLst",
-        )
+        _remap_relationship_ids(source_slide, new_slide, cloned)
+        new_slide.shapes._spTree.insert_element_before(cloned, "p:extLst")
     return new_slide
 
 
-def _delete_slide(prs: Presentation, index: int) -> None:
-    slide_id = prs.slides._sldIdLst[index]
-    prs.part.drop_rel(slide_id.rId)
-    del prs.slides._sldIdLst[index]
+def _remove_slide(presentation: Presentation, index: int) -> None:
+    slide_id_list = presentation.slides._sldIdLst
+    slides = list(slide_id_list)
+    slide_id_list.remove(slides[index])
 
 
 def _remove_shape(shape) -> None:
-    element = shape.element
-    element.getparent().remove(element)
+    shape.element.getparent().remove(shape.element)
 
 
-def _set_font(
-    run,
-    size: float | None = None,
-    color=None,
-    bold: bool | None = None,
-) -> None:
-    run.font.name = FONT_FACE
-    if size is not None:
-        run.font.size = Pt(size)
-    if color is not None:
-        run.font.color.rgb = color
-    if bold is not None:
-        run.font.bold = bold
+def _clear_text_frame(shape):
+    tf = shape.text_frame
+    tf.clear()
+    tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.NONE
+    return tf
 
 
-def _force_no_autofit(slide) -> None:
+def _set_font(run, size: float, color=BLACK, bold: bool = False, italic: bool = False):
+    font = run.font
+    font.name = FONT_FACE
+    font.size = Pt(size)
+    font.bold = bold
+    font.italic = italic
+    font.color.rgb = color
+
+
+def _set_simple_text(shape, text: str, size: float, color=BLACK, bold: bool = False, italic: bool = False, align=None):
+    tf = _clear_text_frame(shape)
+    p = tf.paragraphs[0]
+    if align is not None:
+        p.alignment = align
+    run = p.add_run()
+    run.text = str(text or "")
+    _set_font(run, size, color, bold, italic)
+
+
+def _set_cell_text(cell, text: str, size: float = 8.0, color=BLACK, bold: bool = False, align=PP_ALIGN.CENTER):
+    cell.text = ""
+    tf = cell.text_frame
+    tf.auto_size = MSO_AUTO_SIZE.NONE
+    tf.margin_left = 0
+    tf.margin_right = 0
+    tf.margin_top = 0
+    tf.margin_bottom = 0
+    p = tf.paragraphs[0]
+    p.alignment = align
+    run = p.add_run()
+    run.text = str(text or "")
+    _set_font(run, size, color, bold)
+
+
+def _find_table(slide, rows: int, cols: int):
     for shape in slide.shapes:
-        if hasattr(shape, "text_frame") and shape.has_text_frame:
-            shape.text_frame.auto_size = MSO_AUTO_SIZE.NONE
+        if shape.has_table and len(shape.table.rows) == rows and len(shape.table.columns) == cols:
+            return shape.table
+    return None
 
 
 def _find_text_shape(slide, predicate):
@@ -139,877 +155,152 @@ def _find_text_shape(slide, predicate):
     return None
 
 
-def _find_table(slide, rows: int, cols: int):
-    for shape in slide.shapes:
-        if (
-            shape.has_table
-            and len(shape.table.rows) == rows
-            and len(shape.table.columns) == cols
-        ):
-            return shape.table
-    return None
+def _ratio(current: float, previous: float) -> str:
+    if previous == 0:
+        return "NEW" if current > 0 else "â€”"
+    return f"x{current / previous:.2f}"
 
 
-def _set_shape_text(
-    shape,
-    text: str,
-    *,
-    size: float | None = None,
-    color=None,
-    bold: bool | None = None,
-) -> None:
-    tf = shape.text_frame
-    tf.word_wrap = True
-    tf.auto_size = MSO_AUTO_SIZE.NONE
-
-    if tf.paragraphs and tf.paragraphs[0].runs:
-        run = tf.paragraphs[0].runs[0]
-        run.text = str(text or "")
-        for extra in tf.paragraphs[0].runs[1:]:
-            extra.text = ""
-        _set_font(run, size=size, color=color, bold=bold)
-        for paragraph in tf.paragraphs[1:]:
-            for extra in paragraph.runs:
-                extra.text = ""
-        return
-
-    tf.clear()
-    run = tf.paragraphs[0].add_run()
-    run.text = str(text or "")
-    _set_font(run, size=size, color=color, bold=bold)
+def _ratio_color(label: str):
+    if not label or label in {"â€”", "NEW"}:
+        return GREY
+    try:
+        value = float(str(label).replace("x", ""))
+    except Exception:
+        return RATIO_BLUE
+    return RED if value < 1 else RATIO_BLUE
 
 
-def _set_cell(
-    cell,
-    text: str,
-    *,
-    color=None,
-    bold: bool | None = None,
-) -> None:
-    tf = cell.text_frame
-    paragraph = tf.paragraphs[0]
-    if paragraph.runs:
-        run = paragraph.runs[0]
-        run.text = str(text or "")
-        for extra in paragraph.runs[1:]:
-            extra.text = ""
-    else:
-        run = paragraph.add_run()
-        run.text = str(text or "")
-        _set_font(run, size=7.5)
-
-    _set_font(run, color=color, bold=bold)
-
-    for extra_p in tf.paragraphs[1:]:
-        for extra_run in extra_p.runs:
-            extra_run.text = ""
+def _fmt_num(value) -> str:
+    if value is None or value == "":
+        return "â€”"
+    try:
+        return f"{int(round(float(value))):,}"
+    except Exception:
+        return str(value)
 
 
-def _num(value: int | float | None) -> str:
-    return f"{int(round(float(value or 0))):,}"
+def _fmt_compact(value) -> str:
+    v = float(value or 0)
+    if abs(v) >= 1_000_000:
+        return f"{v / 1_000_000:.1f}M"
+    if abs(v) >= 1_000:
+        return f"{v / 1_000:.1f}K"
+    return f"{int(round(v)):,}"
 
 
-def _compact(value: int | float | None) -> str:
-    number = float(value or 0)
-    if abs(number) >= 10_000:
-        return f"{number / 1000:.0f}K"
-    if abs(number) >= 950:
-        return f"{number / 1000:.1f}K"
-    return f"{int(round(number)):,}"
-
-
-def _pct(value: float | None, digits: int = 1) -> str:
+def _fmt_pct(value, digits: int = 1) -> str:
     if value is None:
         return "â€”"
     return f"{float(value):.{digits}f}%"
 
 
-def _ratio(current: int | float, previous: int | float) -> str:
-    curr = float(current or 0)
-    prev = float(previous or 0)
-    if prev == 0:
-        return "NEW" if curr > 0 else "â€”"
-    return f"x{curr / prev:.2f}"
+def _bc_display_name(product: dict[str, Any]) -> str:
+    name = product.get("product_name", "")
+    if name.startswith("Fold") or name.startswith("Flip"):
+        return "Z " + name
+    return name
 
 
-def _ratio_color(label: str):
-    if label in {"", "â€”", "NEW"}:
-        return GREY
-    try:
-        value = float(label.lstrip("x"))
-    except ValueError:
-        return RATIO_BLUE
-    return RED if value < 1 else RATIO_BLUE
-
-
-def _period(
-    product: dict[str, Any],
-    *,
-    spaced: bool = False,
-    short_year: bool = False,
-    omit_end_year: bool = False,
-) -> str:
-    from datetime import date
-
-    start_text = product.get("period_start") or ""
-    end_text = product.get("period_end") or ""
-    if not start_text or not end_text:
-        return ""
-
-    start = date.fromisoformat(start_text)
-    end = date.fromisoformat(end_text)
-    sep = " ~ " if spaced else "~"
-
-    if short_year:
-        return (
-            f"{start.year % 100}/{start.month}/{start.day}"
-            f"{sep}"
-            f"{end.year % 100}/{end.month}/{end.day}"
-        )
-
-    if omit_end_year:
-        return (
-            f"{start.year}/{start.month}/{start.day}"
-            f"{sep}"
-            f"{end.month}/{end.day}"
-        )
-
-    return (
-        f"{start.year}/{start.month}/{start.day}"
-        f"{sep}"
-        f"{end.year}/{end.month}/{end.day}"
-    )
-
-
-def _overall_pir(
-    product: dict[str, Any],
-    period: str,
-) -> float | None:
-    total = product["channels"]["Total"][period]
-    denominator = total["pd_visit"] + total["bc_visit"]
-    if denominator <= 0:
-        return None
-
-    piv = (
-        product.get("piv_detail", {})
-        .get(period, {})
-        .get("total_piv")
-    )
-    if piv is None:
-        piv = total["carrier_piv"] + total["estore_piv"]
-    return float(piv or 0) / denominator * 100
-
-
-def _channel_share_line(product: dict[str, Any]) -> str:
-    total = product["channels"]["Total"]["current"]["bc_visit"]
+def _share_line(product: dict[str, Any]) -> str:
+    total = float(product["main"].get("Total", {}).get("current", {}).get("bc_visit", 0) or 0)
     rows = []
-    for channel in CHANNEL_ORDER:
-        if channel == "Total":
+    for ch in CHANNEL_ROWS:
+        if ch == "Total":
             continue
-        value = (
-            product["channels"]
-            .get(channel, {})
-            .get("current", {})
-            .get("bc_visit", 0)
-        )
-        share = value / total * 100 if total else 0
-        rows.append((channel, value, share))
-
+        value = float(product["main"].get(ch, {}).get("current", {}).get("bc_visit", 0) or 0)
+        rows.append((ch, value, value / total * 100 if total else 0))
     rows.sort(key=lambda item: item[1], reverse=True)
-    display = {
-        "Organic Search": "Organic",
-    }
-    return "æµå…¥å‰²åˆï¼š" + " > ".join(
-        f"{display.get(channel, channel)} {share:.0f}%"
-        for channel, _value, share in rows[:3]
-    )
+    return "æµå…¥å‰²åˆï¼š" + " > ".join(f"{ch} {pct:.0f}%" for ch, _, pct in rows[:3])
 
 
-def _device_values(
-    product: dict[str, Any],
-    keys: list[str],
-) -> tuple[int, int]:
-    visits = 0
-    piv = 0
-    devices = product.get("devices", {})
-    for key in keys:
-        current = devices.get(key, {}).get("current", {})
-        visits += int(current.get("visits", 0) or 0)
-        piv += int(current.get("carrier_piv", 0) or 0)
-        piv += int(current.get("estore_piv", 0) or 0)
-    return visits, piv
-
-
-def _device_summary(product: dict[str, Any]) -> str:
-    groups = (
-        ("Galaxy", ["Galaxy S", "Galaxy Z", "Galaxy A"]),
-        ("iPhone", ["iPhone"]),
-        ("Sony Xperia", ["Sony Xperia"]),
-    )
+def _device_line(product: dict[str, Any]) -> str:
     parts = []
-    for label, keys in groups:
-        visits, piv = _device_values(product, keys)
-        pir = piv / visits * 100 if visits else None
-        parts.append(
-            f"{label} {_compact(piv)}ä»¶ "
-            f"(PIR {_pct(pir, 1)})"
-        )
+    for label in ("Galaxy", "iPhone", "Sony Xperia"):
+        row = product.get("device_summary", {}).get(label, {})
+        piv = row.get("piv_total", 0) or 0
+        pir = row.get("pir")
+        parts.append(f"{label} {_fmt_compact(piv)}ä»¶ (PIR {_fmt_pct(pir, 1)})")
     return "PIVç«¯æœ«åˆ¥ï¼š" + "ã€".join(parts)
 
 
 def _headline(product: dict[str, Any]) -> str:
-    total = product["channels"]["Total"]
-    delta = (
-        total["current"]["pd_visit"]
-        - total["previous"]["pd_visit"]
-    )
-
-    contributions = []
-    for channel in CHANNEL_ORDER:
-        if channel == "Total":
+    total = product["main"].get("Total", {})
+    curr_total = total.get("current", {}).get("bc_visit", 0) or 0
+    prev_total = total.get("previous", {}).get("bc_visit", 0) or 0
+    deltas = []
+    for ch in CHANNEL_ROWS:
+        if ch == "Total":
             continue
-        row = product["channels"].get(channel)
-        if not row:
-            continue
-        change = (
-            row["current"]["pd_visit"]
-            - row["previous"]["pd_visit"]
-        )
-        contributions.append((channel, change))
-
-    if delta < 0 and contributions:
-        channel, change = min(
-            contributions,
-            key=lambda item: item[1],
-        )
-        if change < 0:
-            return f"{channel}ã‹ã‚‰ã®PDæµå…¥ãŒæ¸›å°‘"
-
-    if delta > 0 and contributions:
-        channel, change = max(
-            contributions,
-            key=lambda item: item[1],
-        )
-        if change > 0:
-            return f"{channel}ã‹ã‚‰ã®PDæµå…¥ãŒå¢—åŠ "
-
-    return "PDæµå…¥ã¯å‰é€±ä¸¦ã¿"
+        current = product["main"].get(ch, {}).get("current", {}).get("bc_visit", 0) or 0
+        previous = product["main"].get(ch, {}).get("previous", {}).get("bc_visit", 0) or 0
+        deltas.append((ch, current - previous, current, previous))
+    if curr_total < prev_total:
+        ch, *_ = min(deltas, key=lambda x: x[1])
+        return f"{ch}ã‹ã‚‰ã®æµå…¥ãŒæ¸›å°‘"
+    if curr_total > prev_total:
+        ch, *_ = max(deltas, key=lambda x: x[1])
+        return f"{ch}ã‹ã‚‰ã®æµå…¥ãŒå¢—åŠ "
+    return "æµå…¥æ§‹æˆã¯å‰Íé€²ä¸¦ã¿ã§æŽ¨ç§»"
 
 
-def _fill_summary_title(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    shape = _find_text_shape(
-        slide,
-        lambda text, _shape: (
-            "PD Visit" in text
-            and "BC Visit" in text
-        ),
-    )
+def _funnel_cvr_line(product: dict[str, Any], segment: str, label: str) -> str:
+    prev = product.get("funnel", {}).get("previous", {}).get(segment, {})
+    curr = product.get("funnel", {}).get("current", {}).get(segment, {})
+    prev_cvr = (prev.get("order", 0) / prev.get("bc_visit", 0) * 100) if prev.get("bc_visit") else None
+    curr_cvr = (curr.get("order", 0) / curr.get("bc_visit", 0) * 100) if curr.get("bc_visit") else None
+    return f"{label} ã®ãƒœãƒƒãƒˆã‚£ãƒ»è¥¿ã®å…¨æ•°ã‹é‡ã›ã†ä‰±ã®ãƒœãƒƒãƒˆã‚£ãƒ»è¥¿ã®å…¨æ•°ãŽ å…ˆé€± {_fmt_pct(prev_cvr, 2)} â†’ ä»Šé€± {_fmt_pct(curr_cvr, 2)}"
+
+
+def _fill_summary_title(slide, product: dict[str, Any]) -> None:
+    shape = _find_text_shape(slide, lambda text, _s: "PD Visit" in text and "BC Visit" in text)
     if shape is None:
         return
+    total = product["main"].get("Total", {})
+    prev = total.get("previous", {})
+    curr = total.get("current", {})
+    name = product.get("product_name", "")
+    pd_ratio = _ratio(curr.get("pd_visit", 0), prev.get("pd_visit", 0))
+    bc_ratio = _ratio(curr.get("bc_visit", 0), prev.get("bc_visit", 0))
+    piv_ratio = _ratio(curr.get("piv_total", 0), prev.get("piv_total", 0))
 
-    name = product["name"]
-    total = product["channels"]["Total"]
-    prev = total["previous"]
-    curr = total["current"]
-
-    prev_piv = (
-        product.get("piv_detail", {})
-        .get("previous", {})
-        .get(
-            "total_piv",
-            prev["carrier_piv"] + prev["estore_piv"],
-        )
-    )
-    curr_piv = (
-        product.get("piv_detail", {})
-        .get("current", {})
-        .get(
-            "total_piv",
-            curr["carrier_piv"] + curr["estore_piv"],
-        )
-    )
-
-    pd_ratio = _ratio(curr["pd_visit"], prev["pd_visit"])
-    bc_ratio = _ratio(curr["bc_visit"], prev["bc_visit"])
-    piv_ratio = _ratio(curr_piv, prev_piv)
-
-    tf = shape.text_frame
-    tf.clear()
-    tf.word_wrap = True
-    tf.auto_size = MSO_AUTO_SIZE.NONE
-
+    tf = _clear_text_frame(shape)
     p0 = tf.paragraphs[0]
-    for text, color in (
-        (f"{name} PD Visit {_compact(curr['pd_visit'])} (", BLACK),
-        (pd_ratio, _ratio_color(pd_ratio)),
-        (" vs å…ˆé€±) ", BLACK),
-        (f"â†’ {_headline(product)}", BLUE),
-    ):
-        run = p0.add_run()
-        run.text = text
-        _set_font(run, size=15.0, color=color, bold=True)
+    p0.space_after = Pt(0)
+    runs = [
+        (f"{name} PD Visit {_fmt_compact(curr.get('pd_visit', 0))} (", BLACK, 18.0),
+        (pd_ratio, _ratio_color(pd_ratio), 16.0),
+        (" vs å…ˆé€±) ", BLACK, 16.0),
+        (f"â†’ k_headline(product)}", BLUE, 14.0),
+    ]
+    for txt, color, size in runs:
+        r = p0.add_run()
+        r.text = txt
+        _set_font(r, size, color, True)
 
     p1 = tf.add_paragraph()
-    for text, color in (
-        (f"{name} BC Visit {_compact(curr['bc_visit'])} (", BLACK),
-        (bc_ratio, _ratio_color(bc_ratio)),
-        (" vs å…ˆé€±) , PIV ", BLACK),
-        (f"{_compact(curr_piv)}ä»¶ (", BLACK),
-        (piv_ratio, _ratio_color(piv_ratio)),
-        (" vs å…ˆé€±)", BLACK),
-    ):
-        run = p1.add_run()
-        run.text = text
-        _set_font(run, size=15.0, color=color, bold=True)
-
-
-def _fill_summary_bullets(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    shape = _find_text_shape(
-        slide,
-        lambda text, _shape: "æµå…¥å‰²åˆ" in text,
-    )
-    if shape is None:
-        return
-
-    tf = shape.text_frame
-    tf.word_wrap = True
-    tf.auto_size = MSO_AUTO_SIZE.NONE
-
-    lines = (
-        _channel_share_line(product),
-        (
-            "PIRï¼šå…ˆé€± "
-            f"{_pct(_overall_pir(product, 'previous'), 1)}"
-            " â†’ ä»Šé€± "
-            f"{_pct(_overall_pir(product, 'current'), 1)}"
-        ),
-        _device_summary(product),
-    )
-
-    while len(tf.paragraphs) < len(lines):
-        tf.add_paragraph()
-
-    for index, line in enumerate(lines):
-        paragraph = tf.paragraphs[index]
-        if paragraph.runs:
-            run = paragraph.runs[0]
-            run.text = line
-            for extra in paragraph.runs[1:]:
-                extra.text = ""
-        else:
-            run = paragraph.add_run()
-            run.text = line
-        _set_font(run, size=11.0, color=BLACK, bold=False)
-
-    for paragraph in tf.paragraphs[len(lines):]:
-        for run in paragraph.runs:
-            run.text = ""
-
-
-def _fill_summary_table(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    table = _find_table(slide, 12, 17)
-    if table is None:
-        raise RuntimeError(
-            "PD+BC Summary table (12x17) ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚"
-        )
-
-    name = product["name"]
-    _set_cell(table.cell(0, 0), f"{name}\nPD+BC")
-    _set_cell(
-        table.cell(0, 8),
-        f"Last Week ({_period(product, spaced=True, short_year=True)})",
-    )
-    _set_cell(table.cell(1, 7), f"{name}\nOrder")
-    _set_cell(table.cell(1, 16), f"{name} Order")
-
-    for row_index, channel in enumerate(
-        CHANNEL_ORDER,
-        start=2,
-    ):
-        data = product["channels"].get(channel)
-        if not data:
-            continue
-
-        prev = data["previous"]
-        curr = data["current"]
-        pd_ratio = _ratio(
-            curr["pd_visit"],
-            prev["pd_visit"],
-        )
-        bc_ratio = _ratio(
-            curr["bc_visit"],
-            prev["bc_visit"],
-        )
-
-        values = (
-            channel,
-            _num(prev["pd_visit"]),
-            _num(prev["pd_to_bc"]),
-            _num(prev["bc_visit"]),
-            _num(prev["carrier_piv"]),
-            _num(prev["estore_piv"]),
-            _pct(prev["pir"], 1),
-            _num(prev["order"]),
-            _num(curr["pd_visit"]),
-            pd_ratio,
-            _num(curr["pd_to_bc"]),
-            _num(curr["bc_visit"]),
-            bc_ratio,
-            _num(curr["carrier_piv"]),
-            _num(curr["estore_piv"]),
-            _pct(curr["pir"], 1),
-            _num(curr["order"]),
-        )
-
-        for col_index, value in enumerate(values):
-            color = None
-            if col_index == 9:
-                color = _ratio_color(pd_ratio)
-            elif col_index == 12:
-                color = _ratio_color(bc_ratio)
-
-            _set_cell(
-                table.cell(row_index, col_index),
-                value,
-                color=color,
-                bold=(
-                    True
-                    if col_index in {9, 12}
-                    else channel == "Total"
-                ),
-            )
-
-
-def _fill_carrier_boxes(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    boxes = [
-        shape
-        for shape in slide.shapes
-        if hasattr(shape, "text")
-        and (shape.text or "").strip().startswith("docomo")
+    p1.space_before = Pt(0)
+    p1.space_after = Pt(0)
+    runs2 = [
+        (f"{name} BC Visit {_fmt_compact(curr.get('bc_visit', 0))} (", BLACK, 18.0),
+        (bc_ratio, _ratio_color(bc_ratio), 16.0),
+        (" vs å…ˆé€±) , BLACK, 16.0),
+        (", PIV ", BLACK, 16.0),
+        (f"{_fmt_compact(curr.get('piv_total', 0))}ä»¶", BLACK, 18.0),
+        (" (", BLACK, 16.0),
+        (piv_ratio, _ratio_color(piv_ratio), 16.0),
+        (" vs å…ˆé€±)", BLACK, 16.0),
     ]
-    boxes.sort(key=lambda shape: shape.left)
-
-    if not boxes:
-        return
-
-    periods = (
-        ["previous", "current"]
-        if len(boxes) >= 2
-        else ["current"]
-    )
-
-    for shape, period in zip(boxes, periods):
-        data = (
-            product.get("piv_detail", {})
-            .get(period, {})
-        )
-        _set_shape_text(
-            shape,
-            (
-                f"docomo {_num(data.get('docomo'))}\n"
-                f"au {_num(data.get('au'))}\n"
-                f"SoftBank {_num(data.get('softbank'))}\n"
-                f"Rakuten {_num(data.get('rakuten'))}"
-            ),
-        )
+    for txt, color, size in runs2:
+        r = p1.add_run()
+        r.text = txt
+        _set_font(r, size, color, True)
 
 
-def _fill_summary_meta(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    label = _find_text_shape(
-        slide,
-        lambda text, _shape: (
-            text.strip().endswith("PD+BC Page")
-            and len(text.strip()) < 80
-        ),
-    )
-    if label is not None:
-        _set_shape_text(
-            label,
-            f"{product['name']} PD+BC Page",
-            size=10.0,
-            color=PALE,
-            bold=True,
-        )
-
-    footer = _find_text_shape(
-        slide,
-        lambda text, _shape: "Dataï¼š" in text,
-    )
-    if footer is not None:
-        _set_shape_text(
-            footer,
-            (
-                f"Dataï¼š{_period(product)}\n"
-                f"{product.get('url', '')}ã€"
-                f"{product.get('buy_url', '')}"
-            ),
-            size=6.4,
-            color=GREY,
-        )
-
-
-def _replace_screenshot(
-    slide,
-    screenshot_bytes: bytes | None,
-) -> None:
-    target = next(
-        (
-            shape
-            for shape in slide.shapes
-            if shape.shape_type == 13
-        ),
-        None,
-    )
-    if target is None or not screenshot_bytes:
-        return
-
-    left = target.left
-    top = target.top
-    width = target.width
-    height = target.height
-    _remove_shape(target)
-
-    with tempfile.NamedTemporaryFile(
-        suffix=".png",
-        delete=False,
-    ) as file:
-        file.write(screenshot_bytes)
-        path = file.name
-
-    try:
-        slide.shapes.add_picture(
-            path,
-            left,
-            top,
-            width=width,
-            height=height,
-        )
-    finally:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-
-
-def _fill_summary_slide(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    _fill_summary_title(slide, product)
-    _fill_summary_bullets(slide, product)
-    _fill_summary_table(slide, product)
-    _fill_carrier_boxes(slide, product)
-    _fill_summary_meta(slide, product)
-    _replace_screenshot(
-        slide,
-        product.get("screenshot_bytes"),
-    )
-    _force_no_autofit(slide)
-
-
-FUNNEL_TABLE_COLS = (0, 1, 2, 3, 4, 5, 6, 7, 9, 10)
-PREVIOUS_ABSOLUTE_COLS = {0, 1, 3, 10}
-
-
-def _funnel_rate(
-    values: list[int],
-    index: int,
-) -> float | None:
-    if not values:
-        return None
-    base = values[0]
-    if base <= 0:
-        return None
-    return values[index] / base * 100
-
-
-def _fill_funnel_group(
-    table,
-    *,
-    current_row: int,
-    previous_row: int,
-    current_rate_row: int,
-    previous_rate_row: int,
-    current: list[int],
-    previous: list[int],
-) -> None:
-    for value_index, table_col in enumerate(
-        FUNNEL_TABLE_COLS
-    ):
-        _set_cell(
-            table.cell(current_row, table_col),
-            _num(current[value_index]),
-            bold=True,
-        )
-
-        if table_col in PREVIOUS_ABSOLUTE_COLS:
-            _set_cell(
-                table.cell(previous_row, table_col),
-                f"(å…ˆé€±ï¼š{_num(previous[value_index])})",
-            )
-        else:
-            _set_cell(
-                table.cell(previous_row, table_col),
-                "",
-            )
-
-        if value_index == 0:
-            continue
-
-        _set_cell(
-            table.cell(current_rate_row, table_col),
-            _pct(
-                _funnel_rate(current, value_index),
-                1,
-            ),
-            bold=True,
-        )
-        _set_cell(
-            table.cell(previous_rate_row, table_col),
-            _pct(
-                _funnel_rate(previous, value_index),
-                1,
-            ),
-        )
-
-    _set_cell(
-        table.cell(current_rate_row, 0),
-        "ç§»å‹•çŽ‡",
-        bold=True,
-    )
-    _set_cell(
-        table.cell(previous_rate_row, 0),
-        "å…ˆé€±",
-    )
-
-    # Payment Service is intentionally blank in the template.
-    for row in (
-        current_row,
-        previous_row,
-        current_rate_row,
-        previous_rate_row,
-    ):
-        _set_cell(table.cell(row, 8), "")
-
-
-def _segment_cvr(
-    funnel: dict[str, Any],
-    period: str,
-    segment: str,
-) -> float | None:
-    values = funnel.get(period, {}).get(segment)
-    if not values or not values[0]:
-        return None
-    return values[-1] / values[0] * 100
-
-
-def _fill_funnel_slide(
-    slide,
-    product: dict[str, Any],
-) -> None:
-    funnel = product.get("funnel")
-    if not funnel:
-        return
-
-    name = product["name"]
-
-    header = _find_text_shape(
-        slide,
-        lambda text, _shape: "BC Page çµŒè·¯" in text,
-    )
-    if header is not None:
-        _set_shape_text(
-            header,
-            f"{name} BC Page çµŒè·¯",
-            size=10.0,
-            color=PALE,
-            bold=True,
-        )
-
-    title = _find_text_shape(
-        slide,
-        lambda text, _shape: (
-            "BCã‹ã‚‰Orderã¾ã§ã®è³¼å…¥çµŒè·¯" in text
-        ),
-    )
-    if title is not None:
-        _set_shape_text(
-            title,
-            f"{name} BCã‹ã‚‰Orderã¾ã§ã®è³¼å…¥çµŒè·¯",
-            size=16.0,
-            color=BLACK,
-            bold=True,
-        )
-
-    bullets = _find_text_shape(
-        slide,
-        lambda text, _shape: (
-            "Organic" in text
-            and "Paid" in text
-            and "CVR" in text
-        ),
-    )
-    if bullets is not None:
-        organic_prev = _segment_cvr(
-            funnel,
-            "previous",
-            "organic",
-        )
-        organic_curr = _segment_cvr(
-            funnel,
-            "current",
-            "organic",
-        )
-        paid_prev = _segment_cvr(
-            funnel,
-            "previous",
-            "paid",
-        )
-        paid_curr = _segment_cvr(
-            funnel,
-            "current",
-            "paid",
-        )
-
-        tf = bullets.text_frame
-        tf.word_wrap = True
-        tf.auto_size = MSO_AUTO_SIZE.NONE
-        lines = (
-            (
-                "Organic ã®BC Visitã‹ã‚‰Orderã¾ã§ã®CVRã¯ "
-                f"å…ˆé€± {_pct(organic_prev, 2)} â†’ "
-                f"ä»Šé€± {_pct(organic_curr, 2)}"
-            ),
-            (
-                "Paid ã®BC Visitã‹ã‚‰Orderã¾ã§ã®CVRã¯ "
-                f"å…ˆé€± {_pct(paid_prev, 2)} â†’ "
-                f"ä»Šé€± {_pct(paid_curr, 2)}"
-            ),
-        )
-        while len(tf.paragraphs) < 2:
-            tf.add_paragraph()
-        for index, line in enumerate(lines):
-            paragraph = tf.paragraphs[index]
-            if paragraph.runs:
-                run = paragraph.runs[0]
-                run.text = line
-                for extra in paragraph.runs[1:]:
-                    extra.text = ""
-            else:
-                run = paragraph.add_run()
-                run.text = line
-            _set_font(
-                run,
-                size=11.0,
-                color=BLACK,
-                bold=False,
-            )
-
-    footer = _find_text_shape(
-        slide,
-        lambda text, _shape: "Dataï¼š" in text,
-    )
-    if footer is not None:
-        _set_shape_text(
-            footer,
-            f"Dataï¼š{_period(product, spaced=True, omit_end_year=True)}",
-            size=6.4,
-            color=GREY,
-        )
-
-    table = _find_table(slide, 19, 11)
-    if table is None:
-        raise RuntimeError(
-            "PD+BC Funnel table (19x11) ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚"
-        )
-
-    groups = (
-        ("organic", 2, 3, 5, 6),
-        ("other", 8, 9, 11, 12),
-        ("paid", 14, 15, 17, 18),
-    )
-    for (
-        segment,
-        current_row,
-        previous_row,
-        current_rate_row,
-        previous_rate_row,
-    ) in groups:
-        current = funnel.get("current", {}).get(segment)
-        previous = funnel.get("previous", {}).get(segment)
-        if not current or not previous:
-            continue
-        _fill_funnel_group(
-            table,
-            current_row=current_row,
-            previous_row=previous_row,
-            current_rate_row=current_rate_row,
-            previous_rate_row=previous_rate_row,
-            current=current,
-            previous=previous,
-        )
-
-    _force_no_autofit(slide)
-
-
-def build_pd_bc_ppt(
-    products: list[dict[str, Any]],
-) -> bytes:
-    if not products:
-        raise RuntimeError(
-            "PowerPointã«å‡ºåŠ›ã™ã‚‹PD+BC ProductãŒã‚ã‚Šã¾ã›ã‚“ã€‚"
-        )
-
-    prs = _load_template()
-    summary_source = prs.slides[0]
-    funnel_source = prs.slides[1]
-
-    output_slides: list[tuple[str, Any, dict[str, Any]]] = []
-
-    for product in products:
-        summary_slide = _duplicate_slide(
-            prs,
-            summary_source,
-        )
-        output_slides.append(
-            ("summary", summary_slide, product)
-        )
-
-        if product.get("funnel"):
-            funnel_slide = _duplicate_slide(
-                prs,
-                funnel_source,
-            )
-            output_slides.append(
-                ("funnel", funnel_slide, product)
-            )
-
-    # Remove untouched source slides after all clones are created.
-    _delete_slide(prs, 0)
-    _delete_slide(prs, 0)
-
-    for kind, slide, product in output_slides:
-        if kind == "summary":
-            _fill_summary_slide(slide, product)
-        else:
-            _fill_funnel_slide(slide, product)
-
-    output = io.BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output.read()
+def _fill_summary_text(slide, product: dict[str, Any]) -> None:
+    shape = _find_text_shape(slide, lambda text, _s: "æµå…¥å‰²åˆèˆ¥¸Ñ•áÐ¤(€€€¥˜Í¡…Á”¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸(€€€Ñ½Ñ…°€ôÁÉ½‘ÕÑl‰µ…¥¸‰t¹•Ð ‰Q½Ñ…°ˆ°íô¤(€€€ÁÉ•Ù}Á¥È€ôÑ½Ñ…°¹•Ð ‰ÁÉ•Ù¥½ÕÌˆ°íô¤¹•Ð ‰Á¥Èˆ¤(€€€ÕÉÉ}Á¥È€ôÑ½Ñ…°¹•Ð ‰ÕÉÉ•¹Ðˆ°íô¤¹•Ð ‰Á¥Èˆ¤(€€€±¥¹•Ì€ôl(€€€€€€€}Í¡…É•}±¥¹”¡ÁÉ½‘ÕÐ¤°(€€€€€€€˜‰A%K¾òk–#¦Äí}™µÑ}ÁÐ¡ÁÉ•Ù}Á¥È°€Ä¥ôƒŠH€Äƒ’î+¦Äí}™µÑ}ÁÐ¡ÕÉÉ}Á¥È°€Ä¥ôˆ°(€€€€€€€}‘•Ù¥•}±¥¹”¡ÁÉ½‘ÕÐ¤°(€€€t(€€€Ñ˜€ô}±•…É}Ñ•áÑ}™É…µ”¡Í¡…Á”¤(€€€™½È¤°±¥¹”¥¸•¹Õµ•É…Ñ”¡±¥¹•Ì¤è(€€€€€€€À€ôÑ˜¹Á…É…É…Á¡ÍlÁt¥˜¤€ôô€À•±Í”Ñ˜¹…‘‘}Á…É…É…Á  ¤(€€€€€€€È€ôÀ¹…‘‘}ÉÕ¸ ¤(€€€€€€€È¹Ñ•áÐ€ô±¥¹”(€€€€€€€}Í•Ñ}™½¹Ð¡È°€ÄÄ¸À°	1,°…±Í”¤(()‘•˜}™¥±±}ÍÕµµ…Éå}Ñ…‰±”¡Í±¥‘”°ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø9½¹”è(€€€Ñ…‰±”€ô}™¥¹‘}Ñ…‰±”¡Í±¥‘”°€ÄÈ°€ÄÜ¤(€€€¥˜Ñ…‰±”¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸(€€€Ñ…‰±”¹•±° À°€À¤¹Ñ•áÐ€ôÁÉ½‘ÕÐ¹•Ð ‰ÁÉ½‘ÕÑ}¹…µ”ˆ°€ˆˆ¤€¬€‰q¹A­	ˆ(€€€Ñ…‰±”¹•±° À°€à¤¹Ñ•áÐ€ô˜‰1…ÍÐ]••¬€¡íÁÉ½‘ÕÐ¹•Ð Í¡½ÉÑ}Á•É¥½‘}±…‰•°œ°€œœ¥ô¤ˆ(€€€™½ÈÉ¤° ¥¸•¹Õµ•É…Ñ”¡!991}I=]L°ÍÑ…ÉÐôÈ¤è(€€€€€€€É½Ü€ôÁÉ½‘ÕÑl‰µ…¥¸‰t¹•Ð¡ °íô¤(€€€€€€€ÁÉ•Ø€ôÉ½Ü¹•Ð ‰ÁÉ•Ù¥½ÕÌˆ°íô¤(€€€€€€€ÕÉÈ€ôÉ½Ü¹•Ð ‰ÕÉÉ•¹Ðˆ°íô¤(€€€€€€€Ù…±Õ•Ì€ôl(€€€€€€€€€€€ °(€€€€€€€€€€€}™µÑ}¹Õ´¡ÁÉ•Ø¹•Ð ‰Á‘}Ù¥Í¥Ðˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÁÉ•Ø¹•Ð ‰Á‘}Ñ½}‰Œˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÁÉ•Ø¹•Ð ‰‰}Ù¥Í¥Ðˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÁÉ•Ø¹•Ð ‰…ÉÉ¥•É}Á¥Øˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÁÉ•Ø¹•Ð ‰•ÍÑ½É•}Á¥Øˆ¤¤°(€€€€€€€€€€€}™µÑ}ÁÐ¡ÁÉ•Ø¹•Ð ‰Á¥Èˆ¤°€Ä¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÁÉ•Ø¹•Ð ‰½É‘•Èˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÕÉÈ¹•Ð ‰Á‘}Ù¥Í¥Ðˆ¤¤°(€€€€€€€€€€€}É…Ñ¥¼¡ÕÉÈ¹•Ð ‰Á‘}Ù¥Í¥Ðˆ°€À¤°ÁÉ•Ø¹•Ð ‰Á‘}Ù¥Í¥Ðˆ°€À¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÕÉÈ¹•Ð ‰Á‘}Ñ½}‰Œˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÕÉÈ¹•Ð ‰‰}Ù¥Í¥Ðˆ¤¤°(€€€€€€€€€€€}É…Ñ¥¼¡ÕÉÈ¹•Ð ‰‰}Ù¥Í¥Ðˆ°€À¤°ÁÉ•Ø¹•Ð ‰‰}Ù¥Í¥Ðˆ°€À¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÕÉÈ¹•Ð ‰…ÉÉ¥•É}Á¥Øˆ¤¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÕÉÈ¹•Ð ‰•ÍÑ½É•}Á¥Øˆ¤¤°(€€€€€€€€€€€}™µÑ}ÁÐ¡ÕÉÈ¹•Ð ‰Á¥Èˆ¤°€Ä¤°(€€€€€€€€€€€}™µÑ}¹Õ´¡ÕÉÈ¹•Ð ‰½É‘•Èˆ¤¤°(€€€€€€€t(€€€€€€€™½È¤°Ù…±Õ”¥¸•¹Õµ•É…Ñ”¡Ù…±Õ•Ì¤è(€€€€€€€€€€€½±½È€ô	1,(€€€€€€€€€€€‰½±€ô €ôô€‰Q½Ñ…°ˆ(€€€€€€€€€€€Í¥é”€ô€Ü¸À¥˜¤€ôô€À•±Í”€Ü¸Ô(€€€€€€€€€€€¥˜¤¥¸€ Ä°€È°€Ì°€Ð°€Ô°€Ø°€Ü¤è(€€€€€€€€€€€€€€€½±½È€ôId(€€€€€€€€€€€¥˜¤¥¸€ ä°€ÄÈ¤è(€€€€€€€€€€€€€€€½±½È€ô}É…Ñ¥½}½±½È¡ÍÑÈ¡Ù…±Õ”¤¤(€€€€€€€€€€€}Í•Ñ}•±±}Ñ•áÐ¡Ñ…‰±”¹•±°¡É¤°¤¤°Ù…±Õ”°Í¥é”õÍ¥é”°½±½Èõ½±½È°‰½±õ‰½±¤(()‘•˜}™¥±±}…ÉÉ¥•É}‰½à¡Í¡…Á”°‘•Ñ…¥°è‘¥ÑmÍÑÈ°¥¹Ñt¤€´ø9½¹”è(€€€Ñ•áÐ€ô€ (€€€€€€€˜‰‘½½µ¼í‘•Ñ…¥°¹•Ð ‘½½µ¼œ°€À¤è±õq¸ˆ(€€€€€€€˜‰…Ôí‘•Ñ…¥°¹•Ð …Ôœ°€À¤è±õq¸ˆ(€€€€€€€˜‰M½™Ñ	…¹¬í‘•Ñ…¥°¹•Ð Í½™Ñ‰…¹¬œ°€À¤è±õq¸ˆ(€€€€€€€˜‰I…­ÕÑ•¸í‘•Ñ…¥°¹•Ð É…­ÕÑ•¸œ°€À¤è±ôˆ(€€€€¤(€€€}Í•Ñ}Í¥µÁ±•}Ñ•áÐ¡Í¡…Á”°Ñ•áÐ°€à¸À°	1,°QÉÕ”°…±¥¸õAA}1%8¹9QH¤(()‘•˜}™¥±±}ÍÕµµ…Éå}…±±½ÕÑÌ¡Í±¥‘”°ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø9½¹”è(€€€‘•Ñ…¥±Ì€ôÁÉ½‘ÕÐ¹•Ð ‰Á¥Ù}‘•Ñ…¥°ˆ°íô¤(€€€‰½á•Ì€ômÍ¡…Á”™½ÈÍ¡…Á”¥¸Í±¥‘”¹Í¡…Á•Ì¥˜¡…Í…ÑÑÈ¡Í¡…Á”°€‰Ñ•áÐˆ¤…¹€‰‘½½µ¼ˆ¥¸€¡Í¡…Á”¹Ñ•áÐ½È€ˆˆ¥t(€€€‰½á•Ì¹Í½ÉÐ¡­•äõ±…µ‰‘„Í¡…Á”èÍ¡…Á”¹±•™Ð¤(€€€¥˜±•¸¡‰½á•Ì¤€øô€Äè(€€€€€€€}™¥±±}…ÉÉ¥•É}‰½à¡‰½á•ÍlÁt°‘•Ñ…¥±Ì¹•Ð ˆÈÝ••­Ì…¼ˆ¤½Èíô¤(€€€¥˜±•¸¡‰½á•Ì¤€øô€Èè(€€€€€€€}™¥±±}…ÉÉ¥•É}‰½à¡‰½á•ÍlÅt°‘•Ñ…¥±Ì¹•Ð ‰1…ÍÐ]••¬ˆ¤½Èíô¤(()‘•˜}™¥±±}ÍÉ••¹Í¡½Ð¡Í±¥‘”°ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø9½¹”è(€€€Ñ…É•Ð€ô9½¹”(€€€™½ÈÍ¡…Á”¥¸Í±¥‘”¹Í¡…Á•Ìè(€€€€€€€¥˜Í¡…Á”¹Í¡…Á•}ÑåÁ”€ôô€ÄÌ…¹Í¡…Á”¹±•™Ð€ð€ÌÀÀÀÀÀÀ…¹Í¡…Á”¹Ñ½À€ø€ÄàÀÀÀÀÀè(€€€€€€€€€€€Ñ…É•Ð€ôÍ¡…Á”(€€€€€€€€€€€‰É•…¬(€€€¥˜Ñ…É•Ð¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸(€€€±•™Ð°Ñ½À°Ý¥‘Ñ °¡•¥¡Ð€ôÑ…É•Ð¹±•™Ð°Ñ…É•Ð¹Ñ½À°Ñ…É•Ð¹Ý¥‘Ñ °Ñ…É•Ð¹¡•¥¡Ð(€€€}É•µ½Ù•}Í¡…Á”¡Ñ…É•Ð¤(€€€ÍÉ••¹Í¡½Ð€ôÁÉ½‘ÕÐ¹•Ð ‰ÍÉ••¹Í¡½Ñ}‰åÑ•Ìˆ¤(€€€¥˜¹½ÐÍÉ••¹Í¡½Ðè(€€€€€€€É•ÑÕÉ¸(€€€Ý¥Ñ Ñ•µÁ™¥±”¹9…µ•‘Q•µÁ½É…Éå¥±”¡ÍÕ™™¥àôˆ¹Á¹œˆ°‘•±•Ñ”õ…±Í”¤…Ì˜è(€€€€€€€˜¹ÝÉ¥Ñ”¡ÍÉ••¹Í¡½Ð¤(€€€€€€€¥µ…•}Á…Ñ €ô˜¹¹…µ”(€€€ÑÉäè(€€€€€€€Í±¥‘”¹Í¡…Á•Ì¹…‘‘}Á¥ÑÕÉ”¡¥µ…•}Á…Ñ °±•™Ð°Ñ½À°Ý¥‘Ñ õÝ¥‘Ñ °¡•¥¡Ðõ¡•¥¡Ð¤(€€€™¥¹…±±äè(€€€€€€€ÑÉäè(€€€€€€€€€€€½Ì¹É•µ½Ù”¡¥µ…•}Á…Ñ ¤(€€€€€€€•á•ÁÐ¥±•9½Ñ½Õ¹‘ÉÉ½Èè(€€€€€€€€€€€Á…ÍÌ(()‘•˜}™¥±±}ÍÕµµ…Éå}Í±¥‘”¡Í±¥‘”°ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø9½¹”è(€€€‰É•…‘ÉÕµˆ€ô}™¥¹‘}Ñ•áÑ}Í¡…Á”¡Í±¥‘”°±…µ‰‘„Ñ•áÐ°}Ìè€‰A­	A…”ˆ¥¸Ñ•áÐ…¹€‰Y¥Í¥Ðˆ¹½Ð¥¸Ñ•áÐ¤(€€€¥˜‰É•…‘ÉÕµˆ¥Ì¹½Ð9½¹”è(€€€€€€€}Í•Ñ}Í¥µÁ±•}Ñ•áÐ¡‰É•…‘ÉÕµˆ°˜‰íÁÉ½‘ÕÐ¹•Ð ÁÉ½‘ÕÑ}¹…µ”œ°€œœ¥ôA­	A…”ˆ°€ÄÀ¸À°A1°QÉÕ”¤(€€€}™¥±±}ÍÕµµ…Éå}Ñ¥Ñ±”¡Í±¥‘”°ÁÉ½‘ÕÐ¤(€€€}™¥±±}ÍÕµµ…Éå}Ñ•áÐ¡Í±¥‘”°ÁÉ½‘ÕÐ¤(€€€}™¥±±}ÍÕµµ…Éå}Ñ…‰±”¡Í±¥‘”°ÁÉ½‘ÕÐ¤(€€€}™¥±±}ÍÕµµ…Éå}…±±½ÕÑÌ¡Í±¥‘”°ÁÉ½‘ÕÐ¤(€€€}™¥±±}ÍÉ••¹Í¡½Ð¡Í±¥‘”°ÁÉ½‘ÕÐ¤(€€€™½½Ñ•È€ô}™¥¹‘}Ñ•áÑ}Í¡…Á”¡Í±¥‘”°±…µ‰‘„Ñ•áÐ°}Ìè€‰…Ñ‡¾òhˆ¥¸Ñ•áÐ…¹€‰Í…µÍÕ¹œˆ¥¸Ñ•áÐ¤(€€€¥˜™½½Ñ•È¥Ì¹½Ð9½¹”è(€€€€€€€‰Õå}ÕÉ°€ôÁÉ½‘ÕÐ¹•Ð ‰ÕÉ°ˆ°€ˆˆ¤¹ÉÍÑÉ¥À ˆ¼ˆ¤€¬€ˆ½‰Õä¼ˆ(€€€€€€€}Í•Ñ}Í¥µÁ±•}Ñ•áÐ¡™½½Ñ•È°˜‰…Ñ‡¾òiíÁÉ½‘ÕÐ¹•Ð Á•É¥½‘}±…‰•°œ°€œœ¥õq¹íÁÉ½‘ÕÐ¹•Ð ÕÉ°œ°€œœ¥õã€m‰Õå}ÕÉ±ôˆ°€Ø¸Ð°Idœ¤(()‘•˜}™Õ¹¹•±}É…Ñ”¡É½Üè‘¥ÑmÍÑÈ°¥¹Ñt°­•äèÍÑÈ¤€´ø™±½…Ðð9½¹”è(€€€‰Œ€ôÉ½Ü¹•Ð ‰‰}Ù¥Í¥Ðˆ°€À¤½È€À(€€€É•ÑÕÉ¸É½Ü¹•Ð¡­•ä°€À¤€¼‰Œ€¨€ÄÀÀ¥˜‰Œ•±Í”9½¹”(()‘•˜}™¥±±}™Õ¹¹•±}Ñ…‰±”¡Í±¥‘”°ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø9½¹”è(€€€Ñ…‰±”€ô}™¥¹‘}Ñ…‰±”¡Í±¥‘”°€Ää°€ÄÄ¤(€€€¥˜Ñ…‰±”¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸(€€€ÕÉÉ•¹Ð€ôÁÉ½‘ÕÐ¹•Ð ‰™Õ¹¹•°ˆ°íô¤¹•Ð ‰ÕÉÉ•¹Ðˆ°íô¤(€€€ÁÉ•Ù¥½ÕÌ€ôÁÉ½‘ÕÐ¹•Ð ‰™Õ¹¹•°ˆ°íô¤¹•Ð ‰ÁÉ•Ù¥½ÕÌˆ°íô¤(€€€É½Ý}ÍÑ…ÉÑÌ€ôì‰=É…¹¥ŒM•…É ˆè€È°€‰=Ñ¡•Èˆè€à°€‰A…¥ˆè€ÄÑô(€€€­•åÍ}™½É}½±Ì€ôl(€€€€€€€€‰‰}Ù¥Í¥Ðˆ°(€€€€€€€€‰…ÉÑ}…‘‘}•Ù•¹Ðˆ°(€€€€€€€€‰…‘‘}½¹}Ù¥Í¥Ðˆ°(€€€€€€€€‰…ÉÑ}Á…•}Ù¥Í¥Ðˆ°(€€€€€€€€‰¡•­½ÕÑ}±½¥¸ˆ°(€€€€€€€€‰½¹Ñ…Ñ}¥¹™¼ˆ°(€€€€€€€€‰‘•±¥Ù•Éäˆ°(€€€€€€€€‰Á…åµ•¹Ðˆ°(€€€€€€€€‰Á…åµ•¹Ñ}Í•ÉÙ¥”ˆ°(€€€€€€€€‰½É‘•É}½¹™¥Éµ…Ñ¥½¸ˆ°(€€€€€€€€‰½É‘•Èˆ°(€€€t(€€€™½ÈÍ•µ•¹Ð°ÍÑ…ÉÑ}É½Ü¥¸É½Ý}ÍÑ…ÉÑÌ¹¥Ñ•µÌ ¤è(€€€€€€€ÕÉÈ€ôÕÉÉ•¹Ð¹•Ð¡Í•µ•¹Ð°íô¤(€€€€€€€ÁÉ•Ø€ôÁÉ•Ù¥½ÕÌ¹•Ð¡Í•µ•¹Ð°íô¤(€€€€€€€™½È¤°­•ä¥¸•¹Õµ•É…Ñ”¡­•åÍ}™½É}½±Ì¤è(€€€€€€€€€€€¥˜­•ä€ôô€‰Á…åµ•¹Ñ}Í•ÉÙ¥”ˆè(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€Ù…±Õ”€ôÕÉÈ¹•Ð¡­•ä°€À¤(€€€€€€€€€€€ÁÉ•Ù}Ù…±Õ”€ôÁÉ•Ø¹•Ð¡­•ä°€À¤(€€€€€€€€€€€}Í•Ñ}•±±}Ñ•áÐ¡Ñ…‰±”¹•±°¡ÍÑ…ÉÑ}É½Ü°¤¤°}™µÑ}¹Õ´¡Ù…±Õ”¤¥˜Ù…±Õ”•±Í”€ˆˆ°Í¥é”ôÄÌ¸À°½±½ÈõIQ%=}	1U¥˜Í•µ•¹Ð€ôô€‰A…¥ˆ•±Í”€¡Id¥˜Í•µ•¹Ð€ôô€‰=Ñ¡•Èˆ•±Í”I	½±½È ÄÈÀ°€ÄÐÔ°€ÄÜØ¤¤°‰½±õQÉÕ”¤(€€€€€€€€€€€ÁÉ•Ù}Ñ•áÐ€ô˜ˆ£–#¦Ç¾òií}™µÑ}¹Õ´¡ÁÉ•Ù}Ù…±Õ”¥ô¤ˆ¥˜ÁÉ•Ù}Ù…±Õ”…¹­•ä¥¸ì‰‰}Ù¥Í¥Ðˆ°€‰…ÉÑ}…‘‘}•Ù•¹Ðˆ°€‰…ÉÑ}Á…•}Ù¥Í¥Ðˆ°€‰½É‘•È‰ô•±Í”€ˆˆ(€€€€€€€€€€€}Í•Ñ}•±±}Ñ•áÐ¡Ñ…‰±”¹•±°¡ÍÑ…ÉÑ}É½Ü€¬€Ä°¤¤°ÁÉ•Ù}Ñ•áÐ°Í¥é”ôØ¸À°½±½ÈõId°‰½±õQÉÕ”¤(€€€€€€€€€€€ÕÉÉ}É…Ñ”€ô}™Õ¹¹•±}É…Ñ”¡ÕÉÈ°­•ä¤(€€€€€€€€€€€ÁÉ•Ù}É…Ñ”€ô}™Õ¹¹•±}É…Ñ”¡ÁÉ•Ø°­•ä¤(€€€€€€€€€€€É…Ñ•}Ñ•áÐ€ô€‹žžï–.Wž:ˆ¥˜¤€ôô€À•±Í”}™µÑ}ÁÐ¡ÕÉÉ}É…Ñ”°€Ä¤(€€€€€€€€€€€ÁÉ•Ù}É…Ñ•}Ñ•áÐ€ô€‹–#¦Äˆ¥˜¤€ôô€À•±Í”}™µÑ}ÁÐ¡ÁÉ•Ù}É…Ñ”°€Ä¤(€€€€€€€€€€€}Í•Ñ}•±±}Ñ•áÐ¡Ñ…‰±”¹•±°¡ÍÑ…ÉÑ}É½Ü€¬€Ì°¤¤°É…Ñ•}Ñ•áÐ°Í¥é”ôØ¸Ô°½±½ÈõIQ%=}	1U¥˜Í•µ•¹Ð€ôô€‰A…¥ˆ•±Í”Id°‰½±õQÉÕ”¤(€€€€€€€€€€€}Í•Ñ}•±±}Ñ•áÐ¡Ñ…‰±”¹•±°¡ÍÑ…ÉÑ}É½Ü€¬€Ð°¤¤°ÁÉ•Ù}É…Ñ•}Ñ•áÐ°Í¥é”ôØ¸Ô°½±½ÈõIQ%=}	1U¥˜Í•µ•¹Ð€ôô€‰A…¥ˆ•±Í”Id°‰½±õQÉÕ”¤(()‘•˜}™¥±±}™Õ¹¹•±}Í±¥‘”¡Í±¥‘”°ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø9½¹”è(€€€ÁÉ½‘ÕÑ}¹…µ”€ô}‰}‘¥ÍÁ±…å}¹…µ”¡ÁÉ½‘ÕÐ¤(€€€‰É•…‘ÉÕµˆ€ô}™¥¹‘}Ñ•áÑ}Í¡…Á”¡Í±¥‘”°±…µ‰‘„Ñ•áÐ°}Ìè€‰	A…”ƒžÖ3¢Þ¼ˆ¥¸Ñ•áÐ¤(€€€¥˜‰É•…‘ÉÕµˆ¥Ì¹½Ð9½¹”è(€€€€€€€}Í•Ñ}Í¥µÁ±•}Ñ•áÐ¡‰É•…‘ÉÕµˆ°˜‰íÁÉ½‘ÕÑ}¹…µ•ô	A…”ƒžÖ3¢Þ¼ˆ°€ÄÀ¸À°A1°QÉÕ”¤(€€€Ñ¥Ñ±”€ô}™¥¹‘}Ñ•áÑ}Í¡…Á”¡Í±¥‘”°±…µ‰‘„Ñ•áÐ°}Ìè€‹¢Îó–—žÖ3¢Þ¼ˆ¥¸Ñ•áÐ¤(€€€¥˜Ñ¥Ñ±”¥Ì¹½Ð9½¹”è(€€€€€€€}Í•Ñ}Í¥µÁ±•}Ñ•áÐ¡Ñ¥Ñ±”°˜‰íÁÉ½‘ÕÑ}¹…µ•ô	Ž/Ž
+%=É‘•ËŽûŽŸŽ»¢Îó–—žÖ3¢Þ¼ˆ°€Äà¸À°	1,°QÉÕ”¤(€€€‰Õ±±•ÑÌ€ô}™¥¹‘}Ñ•áÑ}Í¡…Á”¡Í±¥‘”°±…µ‰‘„Ñ•áÐ°}Ìè€‰YHˆ¥¸Ñ•áÐ¤(€€€¥˜‰Õ±±•ÑÌ¥Ì¹½Ð9½¹”è(€€€€€€€Ñ˜€ô}±•…É}Ñ•áÑ}™É…µ”¡‰Õ±±•ÑÌ¤(€€€€€€€™½È¤°±¥¹”¥¸•¹Õµ•É…Ñ”¡l(€€€€€€€€€€€}™Õ¹¹•±}ÙÉ}±¥¹”¡ÁÉ½‘ÕÐ°€‰=É…¹¥ŒM•…É ˆ°€‰=É…¹¥Œˆ¤°(€€€€€€€€€€€}™Õ¹¹•±}ÙÉ}±¥¹”¡ÁÉ½‘ÕÐ°€‰A…¥ˆ°€‰A…¥ˆ¤°(€€€€€€€t¤è(€€€€€€€€€€€À€ôÑ˜¹Á…É…É…Á¡ÍlÁt¥˜¤€ôô€À•±Í”Ñ˜¹…‘‘}Á…É…É…Á  ¤(€€€€€€€€€€€È€ôÀ¹…‘‘}ÉÕ¸ ¤(€€€€€€€€€€€È¹Ñ•áÐ€ô±¥¹”(€€€€€€€€€€€}Í•Ñ}™½¹Ð¡È°€ÄÄ¸À°	1,¤(€€€™½½Ñ•È€ô}™¥¹‘}Ñ•áÑ}Í¡…Á”¡Í±¥‘”°±…µ‰‘„Ñ•áÐ°}Ìè€‰…Ñ‡¾òhˆ¥¸Ñ•áÐ¤(€€€¥˜™½½Ñ•È¥Ì¹½Ð9½¹”è(€€€€€€€}Í•Ñ}Í¥µÁ±•}Ñ•áÐ¡™½½Ñ•È°˜‰…Ñ‡¾òiíÁÉ½‘ÕÐ¹•Ð ‘…Ñ•}ÍÑ…ÉÐœ°œœ¥lÀèÑuô½í¥¹Ð¡ÁÉ½‘ÕÐ¹•Ð ‘…Ñ•}ÍÑ…ÉÐœ°œÄäÜÀ´Ä´Äœ¤¹ÍÁ±¥Ð œ´œ¥lÅt¥ô½í¥¹Ð¡ÁÉ½‘ÕÐ¹•Ð ‘…Ñ•}ÍÑ…ÉÐœ°œÄäÜÀ´Ä´Äœ¤¹ÍÁ±¥Ð œ´œ¥lÉt¥ôøí¥¹Ð¡ÁÉ½‘ÕÐ¹•Ð ‘…Ñ•}•¹œ°œÄäÜÀ´Ä´Äœ¤¹ÍÁ±¥Ð œ´œ¥lÅt¥ô½í¥¹Ð¡ÁÉ½‘ÕÐ¹•Ð ‘…Ñ•}•¹œ°œÄäÜÀ´Ä´Äœ¤¹ÍÁ±¥Ð œ´œ¥lÉt¥ôˆ°€Ø¸Ð°Id¤(€€€}™¥±±}™Õ¹¹•±}Ñ…‰±”¡Í±¥‘”°ÁÉ½‘ÕÐ¤(()‘•˜}¡…Í}™Õ¹¹•°¡ÁÉ½‘ÕÐè‘¥ÑmÍÑÈ°¹åt¤€´ø‰½½°è(€€€É•ÑÕÉ¸‰½½°¡ÁÉ½‘ÕÐ¹•Ð ‰™Õ¹¹•°ˆ°íô¤¹•Ð ‰ÕÉÉ•¹Ðˆ¤¤(()‘•˜‰Õ¥±‘}Á‘}‰}É•Á½ÉÐ¡ÁÉ½‘ÕÑÌè±¥ÍÑm‘¥ÑmÍÑÈ°¹åut¤€´ø‰åÑ•Ìè(€€€¥˜¹½ÐÁÉ½‘ÕÑÌè(€€€€€€€É…¥Í”IÕ¹Ñ¥µ•ÉÉ½È¡ˆ‰A­	Ž³ŽwŽóŽ#Ž¯–ë–*oŽgŽ
+/ŽŽóŽ
+ÿŽ3ŽŽ
++ŽûŽoŽ
+OŽˆ¤(€€€ÁÉ•Í•¹Ñ…Ñ¥½¸€ô}±½…‘}Ñ•µÁ±…Ñ” ¤(€€€ÍÕµµ…Éå}Ñ•µÁ±…Ñ”€ôÁÉ•Í•¹Ñ…Ñ¥½¸¹Í±¥‘•ÍlÁt(€€€™Õ¹¹•±}Ñ•µÁ±…Ñ”€ôÁÉ•Í•¹Ñ…Ñ¥½¸¹Í±¥‘•ÍlÅt((€€€½ÕÑÁÕÑ}Í±¥‘•Ì€ômt(€€€™½È¥‘à°ÁÉ½‘ÕÐ¥¸•¹Õµ•É…Ñ”¡ÁÉ½‘ÕÑÌ¤è(€€€€€€€¥˜¥‘à€ôô€Àè(€€€€€€€€€€€ÍÕµµ…Éå}Í±¥‘”€ôÁÉ•Í•¹Ñ…Ñ¥½¸¹Í±¥‘•ÍlÁt(€€€€€€€•±Í”è(€€€€€€€€€€€ÍÕµµ…Éå}Í±¥‘”€ô}‘ÕÁ±¥…Ñ•}Ñ•µÁ±…Ñ•}Í±¥‘”¡ÁÉ•Í•¹Ñ…Ñ¥½¸°ÍÕµµ…Éå}Ñ•µÁ±…Ñ”¤(€€€€€€€½ÕÑÁÕÑ}Í±¥‘•Ì¹…ÁÁ•¹¡ÍÕµµ…Éå}Í±¥‘”¤(€€€€€€€}™¥±±}ÍÕµµ…Éå}Í±¥‘”¡ÍÕµµ…Éå}Í±¥‘”°ÁÉ½‘ÕÐ¤(€€€€€€€¥˜}¡…Í}™Õ¹¹•°¡ÁÉ½‘ÕÐ¤è(€€€€€€€€€€€¥˜¥‘à€ôô€Àè(€€€€€€€€€€€€€€€™Õ¹¹•±}Í±¥‘”€ôÁÉ•Í•¹Ñ…Ñ¥½¸¹Í±¥‘•ÍlÅt(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€™Õ¹¹•±}Í±¥‘”€ô}‘ÕÁ±¥…Ñ•}Ñ•µÁ±…Ñ•}Í±¥‘”¡ÁÉ•Í•¹Ñ…Ñ¥½¸°™Õ¹¹•±}Ñ•µÁ±…Ñ”¤(€€€€€€€€€€€½ÕÑÁÕÑ}Í±¥‘•Ì¹…ÁÁ•¹¡™Õ¹¹•±}Í±¥‘”¤(€€€€€€€€€€€}™¥±±}™Õ¹¹•±}Í±¥‘”¡™Õ¹¹•±}Í±¥‘”°ÁÉ½‘ÕÐ¤((€€€€Œ%˜Ñ¡”™¥ÉÍÐÁÉ½‘ÕÐ‘¥¹½Ð¡…Ù”„™Õ¹¹•°°É•µ½Ù”½É¥¥¹…°Í±¥‘”€È¸(€€€¥˜¹½Ð}¡…Í}™Õ¹¹•°¡ÁÉ½‘ÕÑÍlÁt¤…¹±•¸¡ÁÉ•Í•¹Ñ…Ñ¥½¸¹Í±¥‘•Ì¤€ø€Äè(€€€€€€€}É•µ½Ù•}Í±¥‘”¡ÁÉ•Í•¹Ñ…Ñ¥½¸°€Ä¤((€€€½ÕÑÁÕÐ€ô¥¼¹	åÑ•Í%< ¤(€€€ÁÉ•Í•¹Ñ…Ñ¥½¸¹Í…Ù”¡½ÕÑÁÕÐ¤(€€€½ÕÑÁÕÐ¹Í••¬ À¤(€€€É•ÑÕÉ¸½ÕÑÁÕÐ¹É•… ¤(

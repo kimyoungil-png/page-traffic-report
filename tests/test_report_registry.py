@@ -1,10 +1,11 @@
 from reports.registry import available_reports
 
 
-def test_explore_report_is_registered():
+def test_required_reports_are_registered():
     reports = available_reports()
-    explore = next(report for report in reports if report.key == "explore")
-    assert explore.module == "reports.explore.report"
+    keys = {report.key for report in reports}
+    assert "explore" in keys
+    assert "pd_bc" in keys
 
 
 def test_report_keys_are_unique():

@@ -13,17 +13,18 @@ class ReportSpec:
     module: str
 
 
-# Adding a report should only require:
-# 1) a new reports/<report_name>/report.py with render()
-# 2) one entry here.
-#
-# Existing report modules do not import one another.
 REPORTS: tuple[ReportSpec, ...] = (
     ReportSpec(
         key="explore",
         label="Explore 変動上位Page",
         description="Adobe Analytics × GSC × Screenshot × Gemini",
         module="reports.explore.report",
+    ),
+    ReportSpec(
+        key="pd_bc",
+        label="PD+BC Page",
+        description="PD/BC/PIV/PIR集計 × 購入経路",
+        module="reports.pd_bc.report",
     ),
 )
 
