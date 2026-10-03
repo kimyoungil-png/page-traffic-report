@@ -5,7 +5,13 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from gemini_analyzer import DEFAULT_MODEL
 from report_runtime import get_secret
+from reports.pd_bc.analyzer import (
+    fallback_pd_bc_insight,
+    generate_pd_bc_insight,
+    research_market_context,
+)
 from reports.pd_bc.parser import parse_pd_bc_csv
 from reports.pd_bc.ppt import DEFAULT_TEMPLATE_PATH, build_pd_bc_report
 from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_page
@@ -14,6 +20,7 @@ from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_page
 STATE_PRODUCTS = "pd_bc:products"
 STATE_PPT = "pd_bc:ppt_bytes"
 STATE_FILENAME = "pd_bc:output_filename"
+STATE_MARKET_CONTEXT = "pd_bc:market_context"
 
 
 def _preview_rows(products: list[dict]) -> list[dict]:
@@ -73,11 +80,29 @@ def render() -> None:
         hide_index=True,
     )
 
-    use_screenshot = st.checkbox(
-        "モバイルスクリーンショット",
-        value=True,
-        key="pd_bc:use_screenshot",
+    option1, option2 = st.columns(2)
+    with option1:
+        use_gemini = st.checkbox(
+            "Gemini分析（市場イベント検索含む）",
+            value=True,
+            key="pd_bc:use_gemini",
+        )
+    with option2:
+        use_screenshot = st.checkbox(
+            "モバイルスクリーンショット",
+            value=True,
+            key="pd_bc:use_screenshot",
+        )
+
+    gemini_key = get_secret("GEMINI_API_KEY") if use_gemini else None
+    gemini_model = str(
+        get_secret("GEMINI_MODEL", DEFAULT_MODEL)
     )
+    if use_gemini and not gemini_key:
+        st.warning(
+            "GEMINI_API_KEYが未設定のため、"
+            "3週比較のルールベースコメントで続行します。"
+        )
 
     if not DEFAULT_TEMPLATE_PATH.exists():
         st.error(
@@ -94,6 +119,37 @@ def render() -> None:
         screenshot_api = str(
             get_secret("SCREENSHOT_API_URL", DEFAULT_SCREENSHOT_API)
         )
+
+        market_context = {
+            "text": "",
+            "sources": [],
+            "model": "none",
+        }
+        if gemini_key and products:
+            dates = products[0].get("period_dates", {})
+            start_date = (
+                dates.get("older", {}).get("start")
+                or products[0].get("date_start", "")
+            )
+            end_date = (
+                dates.get("current", {}).get("end")
+                or products[0].get("date_end", "")
+            )
+            with st.spinner(
+                "Samsung・競合製品・祝日などの市場イベントを確認中..."
+            ):
+                market_context = research_market_context(
+                    api_key=str(gemini_key),
+                    start_date=str(start_date),
+                    end_date=str(end_date),
+                    model=gemini_model,
+                )
+            if market_context.get("error"):
+                st.warning(
+                    "市場イベント検索は取得できなかったため、"
+                    "CSVデータのみで分析します。"
+                )
+
         working_products = []
         progress = st.progress(0, text="PD+BCレポート生成を開始します...")
 
@@ -117,6 +173,25 @@ def render() -> None:
                             f"Screenshot取得失敗: {exc}"
                         )
 
+            if gemini_key:
+                with st.spinner(
+                    f"[{index}/{len(products)}] AI分析: "
+                    f"{product['product_name']}"
+                ):
+                    item["analysis"] = generate_pd_bc_insight(
+                        product=item,
+                        api_key=str(gemini_key),
+                        market_context=market_context,
+                        model=gemini_model,
+                    )
+                if item["analysis"].get("error"):
+                    item["warnings"].append(
+                        "Gemini分析はFallbackを使用: "
+                        + str(item["analysis"]["error"])
+                    )
+            else:
+                item["analysis"] = fallback_pd_bc_insight(item)
+
             working_products.append(item)
             progress.progress(
                 index / len(products),
@@ -129,6 +204,7 @@ def render() -> None:
         st.session_state[STATE_PRODUCTS] = working_products
         st.session_state[STATE_PPT] = ppt_bytes
         st.session_state[STATE_FILENAME] = f"{Path(uploaded.name).stem}.pptx"
+        st.session_state[STATE_MARKET_CONTEXT] = market_context
         st.success(
             f"PD+BC Page Reportを生成しました。 "
             f"{len(products)} Products / {total_slides} Slides"
@@ -138,6 +214,19 @@ def render() -> None:
         generated = st.session_state[STATE_PRODUCTS]
         st.divider()
         st.header("Report Preview")
+        market_context = st.session_state.get(
+            STATE_MARKET_CONTEXT,
+            {},
+        )
+        if market_context.get("text"):
+            with st.expander("AI分析で参照した市場イベント"):
+                st.write(market_context["text"])
+                for source in market_context.get("sources", []):
+                    title = source.get("title") or source.get("url")
+                    st.markdown(
+                        f"- [{title}]({source.get('url', '')})"
+                    )
+
         st.download_button(
             "PowerPointをダウンロード",
             data=st.session_state[STATE_PPT],
@@ -164,6 +253,13 @@ def render() -> None:
                 current = total.get("current", {})
                 previous = total.get("previous", {})
                 st.markdown(f"**URL:** {product.get('url', '')}")
+                analysis = product.get("analysis", {})
+                if analysis.get("headline_comment"):
+                    st.markdown(
+                        f"**Analysis:** {analysis['headline_comment']}"
+                    )
+                if analysis.get("detail_comment"):
+                    st.write(analysis["detail_comment"])
                 st.write(
                     {
                         "PD Visit": current.get("pd_visit", 0),
