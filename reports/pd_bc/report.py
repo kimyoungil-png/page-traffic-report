@@ -150,6 +150,8 @@ def render() -> None:
                     "市場イベント検索は取得できなかったため、"
                     "CSVデータのみで分析します。"
                 )
+                with st.expander("市場イベント検索エラー詳細"):
+                    st.code(str(market_context.get("error", "")))
 
         working_products = []
         progress = st.progress(0, text="PD+BCレポート生成を開始します...")
