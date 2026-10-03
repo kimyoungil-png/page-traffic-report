@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from pathlib import Path
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -59,11 +60,25 @@ def require_app_password():
     st.caption("Access restricted")
 
     if LOGIN_IMAGE_PATH.exists():
-        left, center, right = st.columns([1, 1.2, 1])
-        with center:
-            st.image(LOGIN_IMAGE_PATH.read_bytes(), use_container_width=True)
+        encoded = base64.b64encode(LOGIN_IMAGE_PATH.read_bytes()).decode("ascii")
+        st.markdown(
+            f"""
+            <div style="text-align:center; margin: 0.5rem 0 1.25rem 0;">
+              <img
+                src="data:image/png;base64,{encoded}"
+                alt="Login"
+                style="width:260px; max-width:45vw; height:auto; border-radius:18px;"
+              />
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     else:
-        st.warning("Login image not found in deployed app.")
+        st.error(f"Login image not found: {LOGIN_IMAGE_PATH}")
+
+    build_id = os.getenv("APP_BUILD_SHA", "")
+    if build_id:
+        st.caption(f"Build: {build_id}")
 
     entered = st.text_input("Password", type="password", placeholder="4-digit password")
     if st.button("Login", type="primary"):
