@@ -36,6 +36,8 @@ from url_utils import breadcrumb_label, report_path
 
 st.set_page_config(page_title="Page Traffic Report", page_icon="📊", layout="wide")
 
+LOGIN_IMAGE_PATH = "assets/momoko2.png"
+
 
 def require_app_password():
     expected = os.getenv("APP_PASSWORD", "")
@@ -53,6 +55,12 @@ def require_app_password():
 
     st.title("Page Traffic Report")
     st.caption("Access restricted")
+
+    if os.path.exists(LOGIN_IMAGE_PATH):
+        left, center, right = st.columns([1, 1.2, 1])
+        with center:
+            st.image(LOGIN_IMAGE_PATH, use_container_width=True)
+
     entered = st.text_input("Password", type="password", placeholder="4-digit password")
     if st.button("Login", type="primary"):
         if entered == expected:
