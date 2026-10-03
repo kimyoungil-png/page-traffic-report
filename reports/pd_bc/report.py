@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -11,6 +13,7 @@ from screenshot import DEFAULT_SCREENSHOT_API, get_mobile_page
 
 STATE_PRODUCTS = "pd_bc:products"
 STATE_PPT = "pd_bc:ppt_bytes"
+STATE_FILENAME = "pd_bc:output_filename"
 
 
 def _preview_rows(products: list[dict]) -> list[dict]:
@@ -125,6 +128,7 @@ def render() -> None:
 
         st.session_state[STATE_PRODUCTS] = working_products
         st.session_state[STATE_PPT] = ppt_bytes
+        st.session_state[STATE_FILENAME] = f"{Path(uploaded.name).stem}.pptx"
         st.success(
             f"PD+BC Page Reportを生成しました。 "
             f"{len(products)} Products / {total_slides} Slides"
@@ -137,7 +141,10 @@ def render() -> None:
         st.download_button(
             "PowerPointをダウンロード",
             data=st.session_state[STATE_PPT],
-            file_name="pd-bc-page-report.pptx",
+            file_name=st.session_state.get(
+                STATE_FILENAME,
+                "pd-bc-page-report.pptx",
+            ),
             mime=(
                 "application/vnd.openxmlformats-officedocument."
                 "presentationml.presentation"
